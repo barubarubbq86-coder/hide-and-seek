@@ -1,0 +1,24 @@
+import http from 'node:http';
+import fs from 'node:fs';
+import path from 'node:path';
+const server=http.createServer((req,res)=>{let f=path.join(process.cwd(),decodeURIComponent(req.url.split('?')[0]).replace(/^\/hide-and-seek/, ''));if(f.endsWith('/'))f+='index.html';try{const b=fs.readFileSync(f);res.setHeader('Content-Type',({'.html':'text/html','.js':'text/javascript','.css':'text/css','.png':'image/png','.webmanifest':'application/manifest+json'})[path.extname(f)]||'text/plain');res.end(b);}catch{res.statusCode=404;res.end('not found');}});
+await new Promise(resolve=>server.listen(8766,'127.0.0.1',resolve));
+import {createRequire} from 'node:module';
+const {chromium}=createRequire(import.meta.url)('playwright');
+const browser=await chromium.launch({headless:true,executablePath:process.env.CHROMIUM_EXECUTABLE||undefined,args:['--no-sandbox','--disable-dev-shm-usage','--use-gl=angle','--use-angle=swiftshader'],env:process.env});
+const context=await browser.newContext({viewport:{width:390,height:844},isMobile:true,hasTouch:true,deviceScaleFactor:1});
+const page=await context.newPage();const errors=[];page.on('pageerror',e=>errors.push(String(e)));page.on('console',msg=>{if(msg.type()==='error')errors.push(msg.text());});
+await page.goto('http://127.0.0.1:8766/hide-and-seek/');await page.screenshot({path:'tests/start-mobile.png'});
+await page.getByRole('button',{name:'かくれんぼ スタート'}).tap();
+const canvas=page.locator('canvas');const r=await canvas.boundingBox();await page.touchscreen.tap(r.x+r.width*134/420,r.y+r.height*391/600);
+await page.waitForTimeout(1500);console.log('MOBILE move status:',await page.locator('#status').textContent());await page.screenshot({path:'tests/play-mobile.png'});
+console.log('geometry',await page.evaluate(()=>({width:innerWidth,scroll:document.documentElement.scrollWidth,canvas:[document.querySelector('canvas').clientWidth,document.querySelector('canvas').clientHeight],bottom:document.querySelector('footer').getBoundingClientRect().bottom})));
+await page.getByRole('button',{name:'一時停止',exact:true}).tap();const pausedClock=await page.locator('#clock').textContent();await page.waitForTimeout(1100);if(await page.locator('#clock').textContent()!==pausedClock)throw Error('Pause clock changed');await page.getByRole('button',{name:'再開 ▶',exact:true}).tap();
+// Actual one-minute run, no accelerated clock. Save halfway checkpoint for review.
+await page.waitForTimeout(27000);await page.screenshot({path:'tests/mid-mobile.png'});console.log('halfway',await page.locator('#clock').textContent());
+await page.waitForTimeout(34000);console.log('REAL ROUND:',await page.locator('#resultPanel').isVisible(),await page.locator('#resultStats').innerText());if(!await page.locator('#resultPanel').isVisible())throw Error('60s did not end');
+await page.screenshot({path:'tests/result-mobile.png'});await page.getByRole('button',{name:'もういちど あそぶ'}).tap();if(!await page.locator('#resultPanel').isHidden())throw Error('Restart failed');console.log('RESTART:',await page.locator('#clock').textContent());
+await page.getByRole('button',{name:'一時停止',exact:true}).tap();
+await page.evaluate(async()=>{await navigator.serviceWorker.ready;});await page.reload();await page.waitForTimeout(500);console.log('SW',await page.evaluate(()=>!!navigator.serviceWorker.controller));await context.setOffline(true);await page.reload();if(!await page.locator('#start').isVisible())throw Error('Offline start unavailable');await page.getByRole('button',{name:'かくれんぼ スタート'}).tap();console.log('OFFLINE: pass');await context.setOffline(false);
+const desktop=await browser.newPage({viewport:{width:1280,height:900}});desktop.on('pageerror',e=>errors.push(String(e)));await desktop.goto('http://127.0.0.1:8766/hide-and-seek/');await desktop.getByRole('button',{name:'3分',exact:true}).click();await desktop.getByRole('button',{name:'かくれんぼ スタート'}).click();console.log('PC:',await desktop.locator('#clock').textContent());await desktop.screenshot({path:'tests/play-desktop.png'});
+console.log('ERRORS',errors);if(errors.length)throw Error(errors.join('\n'));await browser.close();server.close();
