@@ -1,19 +1,21 @@
+import {Sound,DangerMusic} from './sound.js';
 import {Camera,mini} from './camera.js';
-import {Game,W,H,points,obstacles,jail,RESCUE_POINT,WORLD_W,WORLD_H} from './engine.js';
+import {Game,W,H,points,obstacles,jail,RESCUE_POINT,WORLD_W,WORLD_H,sightPolygon} from './engine.js';
 const $=id=>document.getElementById(id),canvas=$('park'),ctx=canvas.getContext('2d');
 let game=new Game(),selectedTime=60,active=false,paused=false,last=0,soundOn=true,audio,beatAt=0,eventIndex=0,toastUntil=0;
+const sound=new Sound();let music=new DangerMusic();
 const camera=new Camera();camera.center(game.controlled.x,game.controlled.y);
 const viewSettings={showVision:true}; // Future difficulty modes can turn off the cone.
 const reduced=matchMedia('(prefers-reduced-motion: reduce)').matches;
-function unlock(){try{audio??=new (window.AudioContext||window.webkitAudioContext)();audio.resume().catch(()=>{});}catch{soundOn=false;}}
+function unlock(){sound.unlock();audio=sound.ctx;}
 function tone(freq,duration=.12,volume=.035,type='sine',delay=0){if(!audio||!soundOn||audio.state!=='running')return;const t=audio.currentTime+delay,osc=audio.createOscillator(),gain=audio.createGain();osc.type=type;osc.frequency.setValueAtTime(freq,t);osc.frequency.exponentialRampToValueAtTime(Math.max(35,freq*.45),t+duration);gain.gain.setValueAtTime(.001,t);gain.gain.exponentialRampToValueAtTime(volume,t+.012);gain.gain.exponentialRampToValueAtTime(.001,t+duration);osc.connect(gain);gain.connect(audio.destination);osc.start(t);osc.stop(t+duration+.02);}
-function start(){unlock();game=new Game(selectedTime);camera.follow=true;camera.center(game.controlled.x,game.controlled.y);active=true;paused=false;eventIndex=0;beatAt=0;toastUntil=0;$('startPanel').hidden=true;$('resultPanel').hidden=true;$('pause').disabled=false;$('pause').textContent='一時停止';$('hint').textContent='光る場所をタップして移動';tone(420,.2);updateUI();}
+function start(){sound.start();music=new DangerMusic();unlock();game=new Game(selectedTime);camera.follow=true;camera.center(game.controlled.x,game.controlled.y);active=true;paused=false;eventIndex=0;beatAt=0;toastUntil=0;$('startPanel').hidden=true;$('resultPanel').hidden=true;$('pause').disabled=false;$('pause').textContent='一時停止';$('hint').textContent='光る場所をタップして移動';tone(420,.2);updateUI();}
 function go(p){if(!active||paused)return;if(game.move(game.controlledId,p)){tone(510,.07,.02);$('hint').textContent=points[p].name+'へ移動中…';}else if(game.controlled.state==='moving'){showToast('移動が終わったら、次の場所を選ぼう');}}
 function showToast(text){$('hint').textContent=text;toastUntil=game.elapsed+3;}
-$('start').onclick=start;$('again').onclick=start;$('back').onclick=()=>{active=false;$('resultPanel').hidden=true;$('startPanel').hidden=false;$('pause').disabled=true;game=new Game(selectedTime);updateUI();};
+$('start').onclick=start;$('again').onclick=start;$('back').onclick=()=>{active=false;sound.stop();$('resultPanel').hidden=true;$('startPanel').hidden=false;$('pause').disabled=true;game=new Game(selectedTime);updateUI();};
 for(const b of document.querySelectorAll('[data-time]'))b.onclick=()=>{selectedTime=+b.dataset.time;document.querySelectorAll('[data-time]').forEach(x=>x.setAttribute('aria-pressed',String(x===b)));game=new Game(selectedTime);updateUI();};
-$('sound').onclick=()=>{soundOn=!soundOn;if(soundOn)unlock();$('sound').textContent=soundOn?'♪ ON':'♪ OFF';$('sound').setAttribute('aria-pressed',String(soundOn));$('sound').setAttribute('aria-label',soundOn?'音を切る':'音を出す');};
-function pause(){if(!active||game.state==='ended')return;paused=!paused;$('pause').textContent=paused?'再開 ▶':'一時停止';$('hint').textContent=paused?'一時停止中': '光る場所をタップして移動';if(!paused)unlock();}
+$('sound').onclick=()=>{soundOn=!soundOn;sound.setEnabled(soundOn);if(soundOn)unlock();$('sound').textContent=soundOn?'♪ ON':'♪ OFF';$('sound').setAttribute('aria-pressed',String(soundOn));$('sound').setAttribute('aria-label',soundOn?'音を切る':'音を出す');};
+function pause(){if(!active||game.state==='ended')return;paused=!paused;if(paused)sound.pause();else sound.resume();$('pause').textContent=paused?'再開 ▶':'一時停止';$('hint').textContent=paused?'一時停止中': '光る場所をタップして移動';if(!paused)unlock();}
 $('pause').onclick=pause;document.addEventListener('visibilitychange',()=>{if(document.hidden&&active&&!paused&&game.state==='playing')pause();});
 points.forEach((p,i)=>{const b=document.createElement('button');b.textContent=p.name;b.onclick=()=>{go(i);document.querySelector('details').open=false;document.querySelector('header').scrollIntoView({block:'start',behavior:'auto'});};$('locations').append(b);});
 let drag=null;
@@ -29,7 +31,7 @@ canvas.addEventListener('pointerup',e=>{if(!drag)return;const gesture=drag;drag=
 function resumeFollow(){camera.follow=true;showToast('青い帽子を追いかける');}
 $('follow').onclick=resumeFollow;
 $('follow').onpointerup=e=>{e.preventDefault();resumeFollow();};
-function updateUI(){const c=game.controlled,prisoners=game.characters.filter(c=>c.state==='captured').length,focused=game.focus.remaining>0;
+function updateUI(){if(sound.failed)$('sound').textContent='♪ 再読込';const c=game.controlled,prisoners=game.characters.filter(c=>c.state==='captured').length,focused=game.focus.remaining>0;
  $('clock').textContent=`${Math.floor(Math.ceil(game.remaining)/60)}:${String(Math.ceil(game.remaining)%60).padStart(2,'0')}`;
  $('clock').style.color=game.remaining<=10&&active?'#ff9e8b':'';
  $('members').replaceChildren(...game.characters.map((member,i)=>{const s=document.createElement('span');s.textContent=member.state==='captured'?'×':'●';s.style.color=member.state==='captured'?'#aa8492':i===game.controlledId?'#77d7f9':'#f7ce84';s.title=member.state==='captured'?'牢屋にいる':i===game.controlledId?'操作中':'逃げている';return s;}));
@@ -42,7 +44,7 @@ function updateUI(){const c=game.controlled,prisoners=game.characters.filter(c=>
  $('focusLabel').textContent=game.focus.redirect?'！見つかりそう · 行き先を選べる':'！見つかりそう · じっと見よう';
  if(active&&!paused&&toastUntil<game.elapsed&&c.state==='hidden')$('hint').textContent=prisoners?'光る牢屋の前へ行くと、全員救出':game.danger>.5?'動く？ それとも、ここで待つ？':'光る場所をタップして移動';
 }
-function end(){active=false;$('pause').disabled=true;const r=game.result;$('resultTitle').textContent=r.survivors?'逃げきった！':'みんな捕まった…';$('playerResult').textContent=r.survivors?`仲間をたすけた回数：${r.rescues}回`:'次は、鬼が離れたら牢屋へ行こう。';$('resultStats').innerHTML=`<div><strong>${r.survivors}</strong>逃げきった人数</div><div><strong>${r.caught}</strong>捕まった人数</div><div><strong>${r.duration/60}分</strong>選んだ時間</div>`;$('resultPanel').hidden=false;tone(r.survivors?520:180,.3);}
+function end(){active=false;sound.finish();$('pause').disabled=true;const r=game.result;$('resultTitle').textContent=r.survivors?'逃げきった！':'みんな捕まった…';$('playerResult').textContent=r.survivors?`仲間をたすけた回数：${r.rescues}回`:'次は、鬼が離れたら牢屋へ行こう。';$('resultStats').innerHTML=`<div><strong>${r.survivors}</strong>逃げきった人数</div><div><strong>${r.caught}</strong>捕まった人数</div><div><strong>${r.duration/60}分</strong>選んだ時間</div>`;$('resultPanel').hidden=false;tone(r.survivors?520:180,.3);}
 // All artwork is drawn locally. No image, font, analytics or network dependencies.
 function rect(x,y,w,h,fill,r=0){ctx.fillStyle=fill;ctx.beginPath();ctx.roundRect(x,y,w,h,r);ctx.fill();}
 function circle(x,y,r,fill){ctx.beginPath();ctx.arc(x,y,r,0,Math.PI*2);ctx.fillStyle=fill;ctx.fill();}
@@ -55,8 +57,8 @@ function equipment(o){const {x,y,w,h,type}=o;rect(x+6,y+8,w,h,'#30333455',9);if(
  if(type==='toilet'){rect(x,y,w,h,'#a39b81',6);rect(x-4,y-4,w+8,72,'#656778',6);for(let i=0;i<5;i++)line(x+4,y+6+i*13,x+w-4,y+6+i*13,'#77788a',2);rect(x+19,y+73,24,27,'#454a51',3);rect(x+52,y+73,22,27,'#454a51',3);text('WC',x+w/2,y+42,21,'#e8d8bc');text('トイレ',x+w/2,y-13,11);}
  if(type==='bench'){rect(x,y,w,h,'#9f7354',4);line(x+4,y+7,x+w-4,y+7,'#c79b6d',2);line(x+4,y+15,x+w-4,y+15,'#c79b6d',2);rect(x+9,y+h,6,7,'#474941');rect(x+w-15,y+h,6,7,'#474941');text('ベンチ',x+w/2,y-8,11);}}
 function character(c){const isPlayer=c.id===game.controlledId,cap=c.state==='captured',color=isPlayer?'#66d5f6':['#f5c47a','#d7a3d1','#b9d487','#f1a58d'][c.id%4];ctx.save();ctx.globalAlpha=cap?.8:1;const {x,y}=c;ctx.fillStyle='#252b3d66';ctx.beginPath();ctx.ellipse(x+3,y+9,11,5,0,0,Math.PI*2);ctx.fill();line(x-3,y+6,x-5,y+13,'#332e40',3);line(x+3,y+6,x+5,y+13,'#332e40',3);rect(x-7,y-2,14,12,color,4);line(x-7,y+1,x-10,y+6,'#d8af87',3);line(x+7,y+1,x+10,y+6,'#d8af87',3);circle(x,y-7,7,'#efc49d');rect(x-8,y-14,16,6,color,4);if(isPlayer){rect(x+3,y-10,8,3,'#baeefa',2);text(cap?'牢屋':'操作中',x,y-22,10,'#bdefff');}else text(String(c.id),x,y-22,10,color);
- if(c.state==='spotted'){circle(x,y-34,10,'#f8da93');text('!',x,y-30,15,'#8f423e');}if(cap){circle(x,y,17,'#24213177');text('×',x,y+5,23,'#f7c3ad');}ctx.restore();}
-function oni(){const o=game.oni,{x,y}=o;ctx.save();ctx.translate(x,y);ctx.rotate(o.angle);if(viewSettings.showVision){ctx.fillStyle=o.mode==='chase'?'#ed835127':'#efca7e13';ctx.beginPath();ctx.moveTo(0,0);ctx.arc(0,0,145,-.62,.62);ctx.closePath();ctx.fill();ctx.strokeStyle='#f5c48b30';ctx.lineWidth=1;ctx.stroke();}ctx.restore();ctx.fillStyle='#24203877';ctx.beginPath();ctx.ellipse(x+4,y+12,16,6,0,0,7);ctx.fill();line(x-5,y+6,x-8,y+16,'#4b3440',5);line(x+5,y+6,x+8,y+16,'#4b3440',5);rect(x-11,y-2,22,13,'#dbc078',4);for(let i=0;i<3;i++)line(x-8+i*7,y+1,x-5+i*7,y+7,'#524231',3);line(x-10,y-3,x-15,y+5,'#c55751',5);line(x+10,y-3,x+15,y+5,'#c55751',5);circle(x,y-11,12,'#e77663');circle(x-5,y-18,7,'#673641');circle(x+4,y-19,7,'#673641');for(const dx of [-7,7]){ctx.beginPath();ctx.moveTo(x+dx-4,y-20);ctx.lineTo(x+dx,y-30);ctx.lineTo(x+dx+4,y-20);ctx.fillStyle='#efd19b';ctx.fill();}circle(x-4,y-12,2,'#382939');circle(x+4,y-12,2,'#382939');line(x-4,y-4,x+4,y-4,'#fff0c2',3);if(game.focus.remaining>0){ctx.strokeStyle='#f5da95';ctx.lineWidth=2;ctx.beginPath();ctx.arc(x,y,22,0,Math.PI*2);ctx.stroke();}const ax=x+Math.cos(o.angle)*23,ay=y+Math.sin(o.angle)*23;circle(ax,ay,3,'#ffe2aa');text('鬼',x,y-37,11,'#ffc2a1');if(o.mode==='search')text('…？',x+22,y-24,15,'#ffe4a9');}
+ if(c.deniedUntil>game.elapsed){text('だれかいる！',x,y-40,11,'#ffe5a3');}if(c.state==='spotted'){circle(x,y-34,10,'#f8da93');text('!',x,y-30,15,'#8f423e');}if(cap){circle(x,y,17,'#24213177');text('×',x,y+5,23,'#f7c3ad');}ctx.restore();}
+function oni(o){const {x,y}=o;ctx.save();if(viewSettings.showVision){ctx.fillStyle=o.mode==='chase'?'#ed835127':'#efca7e13';ctx.beginPath();sightPolygon(o).forEach((p,i)=>i?ctx.lineTo(p.x,p.y):ctx.moveTo(p.x,p.y));ctx.closePath();ctx.fill();ctx.strokeStyle='#f5c48b30';ctx.lineWidth=1;ctx.stroke();}ctx.restore();ctx.fillStyle='#24203877';ctx.beginPath();ctx.ellipse(x+4,y+12,16,6,0,0,7);ctx.fill();line(x-5,y+6,x-8,y+16,'#4b3440',5);line(x+5,y+6,x+8,y+16,'#4b3440',5);rect(x-11,y-2,22,13,'#dbc078',4);for(let i=0;i<3;i++)line(x-8+i*7,y+1,x-5+i*7,y+7,'#524231',3);line(x-10,y-3,x-15,y+5,'#c55751',5);line(x+10,y-3,x+15,y+5,'#c55751',5);circle(x,y-11,12,'#e77663');circle(x-5,y-18,7,'#673641');circle(x+4,y-19,7,'#673641');for(const dx of [-7,7]){ctx.beginPath();ctx.moveTo(x+dx-4,y-20);ctx.lineTo(x+dx,y-30);ctx.lineTo(x+dx+4,y-20);ctx.fillStyle='#efd19b';ctx.fill();}circle(x-4,y-12,2,'#382939');circle(x+4,y-12,2,'#382939');line(x-4,y-4,x+4,y-4,'#fff0c2',3);if(game.focus.remaining>0&&o===game.dangerousOni){ctx.strokeStyle='#f5da95';ctx.lineWidth=2;ctx.beginPath();ctx.arc(x,y,22,0,Math.PI*2);ctx.stroke();}const ax=x+Math.cos(o.angle)*23,ay=y+Math.sin(o.angle)*23;circle(ax,ay,3,'#ffe2aa');text(`鬼${o.id+1}`,x,y-37,11,'#ffc2a1');if(o.mode==='search')text('…？',x+22,y-24,15,'#ffe4a9');}
 function drawJail(){const count=game.characters.filter(c=>c.state==='captured').length,flash=game.elapsed<game.rescueFlashUntil;
  rect(jail.x,jail.y,jail.w,jail.h,flash?'#ebd99890':'#443945bb',7);
  ctx.strokeStyle=count?'#e7a979':'#97867c';ctx.lineWidth=2;ctx.strokeRect(jail.x,jail.y,jail.w,jail.h);
@@ -69,8 +71,8 @@ function drawMapHUD(){
  obstacles.forEach(o=>rect(px(o.x),py(o.y),o.w/WORLD_W*mini.w,o.h/WORLD_H*mini.h,'#434e42'));
  points.forEach(p=>circle(px(p.x),py(p.y),1.5,p.rescue?'#f6e4a0':'#d4c99a'));
  game.characters.forEach(c=>circle(px(c.x),py(c.y),c.id===game.controlledId?3:2,c.state==='captured'?'#a48ca5':c.id===game.controlledId?'#84e3ff':'#f4c581'));
- circle(px(game.oni.x),py(game.oni.y),3,'#ff8775');ctx.strokeStyle='#dbe8d4';ctx.lineWidth=1;ctx.strokeRect(px(camera.x),py(camera.y),W/WORLD_W*mini.w,H/WORLD_H*mini.h);
- const o=camera.screen(game.oni.x,game.oni.y);if(o.x<20||o.x>W-20||o.y<45||o.y>H-40){const x=Math.max(18,Math.min(W-18,o.x)),y=Math.max(48,Math.min(H-36,o.y));circle(x,y,13,'#603641dd');text('鬼',x,y+4,11,'#ffc39c');}
+ game.onis.forEach(o=>circle(px(o.x),py(o.y),3,'#ff8775'));ctx.strokeStyle='#dbe8d4';ctx.lineWidth=1;ctx.strokeRect(px(camera.x),py(camera.y),W/WORLD_W*mini.w,H/WORLD_H*mini.h);
+ for(const oni of game.onis){const o=camera.screen(oni.x,oni.y);if(o.x<20||o.x>W-20||o.y<45||o.y>H-40){const x=Math.max(18,Math.min(W-18,o.x)),y=Math.max(48,Math.min(H-36,o.y));circle(x,y,13,'#603641dd');text(`鬼${oni.id+1}`,x,y+4,11,'#ffc39c');}}
  $('follow').hidden=camera.follow;
 }
 function draw(t){ctx.setTransform(2,0,0,2,0,0);ctx.clearRect(0,0,W,H);ctx.save();if(!reduced&&active&&!paused&&game.danger>.8){ctx.translate(Math.sin(t*28)*.7,Math.cos(t*24)*.5);}ctx.translate(-camera.x,-camera.y);const bg=ctx.createLinearGradient(0,0,WORLD_W,WORLD_H);bg.addColorStop(0,'#9b8e60');bg.addColorStop(.5,'#767d55');bg.addColorStop(1,'#555c4e');ctx.fillStyle=bg;ctx.fillRect(0,0,WORLD_W,WORLD_H);
@@ -83,12 +85,14 @@ function draw(t){ctx.setTransform(2,0,0,2,0,0);ctx.clearRect(0,0,W,H);ctx.save()
  const player=game.controlled;if(player.route.length){ctx.setLineDash([3,6]);ctx.strokeStyle='#b3e6e78c';ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(player.x,player.y);for(const p of player.route)ctx.lineTo(p.x,p.y);ctx.stroke();ctx.setLineDash([]);}
  obstacles.forEach(equipment);drawJail();
  points.forEach((p,i)=>{const chosen=player.destination===i;const pulse=reduced?0:Math.sin(t*2.5+i)*1.7;circle(p.x,p.y,22+pulse,'#faf0b40d');ctx.strokeStyle=chosen?'#b5edff':'#e9d7a68c';ctx.lineWidth=chosen?2.5:1.5;ctx.setLineDash(chosen?[]:[3,4]);ctx.beginPath();ctx.arc(p.x,p.y,20,0,Math.PI*2);ctx.stroke();ctx.setLineDash([]);circle(p.x,p.y,4,chosen?'#b5edff':'#e4d6a6');if(p.bush)text('茂み',p.x,p.y+34,10);if(p.rescue){const prisoners=game.characters.filter(c=>c.state==='captured').length;circle(p.x,p.y,19,prisoners?'#f6d98e55':'#f6d98e15');circle(p.x-4,p.y,5,'#ffe3a0');circle(p.x-4,p.y,2,'#756146');line(p.x+1,p.y,p.x+10,p.y,'#ffe3a0',3);line(p.x+7,p.y,p.x+7,p.y+4,'#ffe3a0',3);text('たすける',p.x,p.y+34,10,prisoners?'#fff0ac':'#d0baa1');}});
- oni();[...game.characters].sort((a,b)=>a.y-b.y).forEach(character);
+ game.onis.forEach(oni);[...game.characters].sort((a,b)=>a.y-b.y).forEach(character);
  const dusk=ctx.createLinearGradient(0,0,WORLD_W,WORLD_H);dusk.addColorStop(0,'#eb965313');dusk.addColorStop(1,'#22274322');ctx.fillStyle=dusk;ctx.fillRect(0,0,WORLD_W,WORLD_H);ctx.restore();drawMapHUD();}
-let uiTimer=0;function frame(now){const dt=Math.min((now-last)/1000||0,.05);last=now;if(active&&!paused){game.update(dt);
+let uiTimer=0;function frame(now){const dt=Math.min((now-last)/1000||0,.05);last=now;if(active&&!paused){game.update(dt);sound.setMode(music.update(game.danger,game.focus.remaining>0,dt));
  let controlEvent=null;for(const e of game.events.filter(e=>e.seq>eventIndex)){eventIndex=e.seq;
-  if(e.type==='spotted'){tone(360,.2,.035,'triangle');showToast(e.id===game.controlledId?'！見つかった！':`仲間${e.id}が見つかった！`);}
-  if(e.type==='capture'){tone(120,.2,.035);showToast(`${e.id===0?'あなた':`仲間${e.id}`}が牢屋へ…`);}
+  if(e.type==='spotted'){sound.effect('spotted',e.seq);showToast(e.id===game.controlledId?'！見つかった！':`仲間${e.id}が見つかった！`);}
+  if(e.type==='capture'){sound.effect('captured',e.seq);showToast(`${e.id===0?'あなた':`仲間${e.id}`}が牢屋へ…`);}
+  if(e.type==='occupied'&&e.id===game.controlledId){tone(290,.1,.025);showToast('だれかいる！ 別の場所へ…');}
+  if(e.type==='oni-added')showToast('鬼が増えた！');
   if(e.type==='control'){tone(470,.13);controlEvent=e;camera.follow=true;}
   if(e.type==='rescue'){tone(540,.16,.025);tone(720,.22,.025,'sine',.12);showToast(`たすけた！ ${e.count}人が自由に！`);}
   if(e.type==='focus'){tone(90,.19,.05);showToast('！見つかりそう · 次の場所を選ぼう');}

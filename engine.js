@@ -43,35 +43,63 @@ points.push(
 );
 // Phase 3 rules seam. State transitions and presentation remain independent of mode.
 export const rescueRules={
- id:'park-rescue',rescueEnabled:true,rescueCooldown:6,releaseGrace:2.2,
+ id:'park-rescue',oniCount:2,rescueEnabled:true,rescueCooldown:6,releaseGrace:2.2,
  capturedPosition(character){return jail.slots[character.id];},
  rescueTargets(game){return game.characters.filter(c=>c.state==='captured');},
  outcome(game){if(game.characters.every(c=>c.state==='captured'))return 'defeat';if(game.remaining<=0)return 'timeout';return null;}
 };
+// Open spaces and the rescue gate have no capacity limit. Occupancy is checked at arrival.
+points.forEach((p,i)=>p.capacity=[1,9,10,12].includes(i)?Infinity:1);
+export const VISION={range:175,halfAngle:.84,notice: .72}; // 96-degree forward vision.
+export function sightPolygon(o){
+ const result=[{x:o.x,y:o.y}];
+ for(let i=0;i<=32;i++){const a=o.angle-VISION.halfAngle+2*VISION.halfAngle*i/32;
+  const end={x:o.x+Math.cos(a)*VISION.range,y:o.y+Math.sin(a)*VISION.range};let length=VISION.range;
+  // Analytic ray/rectangle entry; the drawn cone stops at exactly the same blockers as LOS.
+  for(const r of obstacles){let lo=0,hi=1;for(const [start,d,min,max] of [[o.x,end.x-o.x,r.x,r.x+r.w],[o.y,end.y-o.y,r.y,r.y+r.h]]){if(Math.abs(d)<1e-8){if(start<min||start>max){lo=2;break;}}else{let a=(min-start)/d,b=(max-start)/d;if(a>b)[a,b]=[b,a];lo=Math.max(lo,a);hi=Math.min(hi,b);}}if(lo<=hi&&hi>=0&&lo<=1)length=Math.min(length,Math.max(0,lo)*VISION.range);}
+  result.push({x:o.x+Math.cos(a)*length,y:o.y+Math.sin(a)*length});
+ }return result;
+}
 export class Game{
  constructor(seconds=60,random=Math.random,rules=rescueRules){
   this.random=random;this.rules=rules;this.duration=seconds;this.remaining=seconds;this.elapsed=0;this.simTime=0;this.state='playing';
   this.events=[];this.nextEvent=1;this.controlledId=0;this.rescueReadyAt=0;this.rescueFlashUntil=0;
   this.focus={remaining:0,cooldown:0,scale:1,redirect:false,armed:true};
-  this.characters=[7,0,2,6,8].map((p,i)=>({id:i,x:points[p].x,y:points[p].y,point:p,destination:p,route:[],angle:0,state:'hidden',exposure:0,decision:2+i*1.4,grace:0}));
-  this.oni={x:215,y:320,angle:-Math.PI/2,route:[],target:null,mode:'patrol',wait:2,inspect:null,lastPatrol:null};
-  this.danger=0;this.result=null;this.stats={moves:0,comMoves:0,discoveries:0,captures:0,patrols:0,rescues:0,released:0,switches:0,focuses:0};
+  this.characters=[7,0,2,6,8].map((p,i)=>({id:i,x:points[p].x,y:points[p].y,point:p,origin:p,destination:p,route:[],angle:0,state:'hidden',exposure:0,exposures:[],decision:2+i*1.4,grace:0,deniedUntil:0}));
+  this.onis=Array.from({length:rules.oniCount??2},(_,id)=>this.makeOni(id));
+  this.danger=0;this.result=null;this.stats={moves:0,comMoves:0,discoveries:0,captures:0,patrols:0,rescues:0,released:0,switches:0,focuses:0,occupied:0};
  }
+ makeOni(id){return {id,x:id===2?515:id%2?465:215,y:id===2?349:id%2?585:320,angle:id%2?-Math.PI/2:Math.PI/2,route:[],target:null,mode:'patrol',wait:.6+id*.9,inspect:null,lastPatrol:null};}
+ get oni(){return this.onis[0];} // Existing integrations can still address the primary oni.
  get controlled(){return this.characters[this.controlledId];}
  emit(type,id,extra={}){this.events.push({seq:this.nextEvent++,type,id,time:this.elapsed,...extra});if(this.events.length>100)this.events.shift();}
+ occupant(p,except=-1){return this.characters.find(c=>c.id!==except&&['hidden','spotted'].includes(c.state)&&c.point===p);}
+ available(p,id){return points[p].capacity!==1||!this.occupant(p,id);}
  move(id,p){
   const c=this.characters[id],redirect=id===this.controlledId&&this.focus.remaining>0&&this.focus.redirect;
   if(this.state!=='playing'||!c||!points[p]||['captured','spotted'].includes(c.state)||c.route.length&&!redirect||p===c.point)return false;
   const route=pathfind(c,points[p]);if(!route.length)return false;
   if(c.route.length&&redirect)this.focus.redirect=false;
+  if(c.point!==null)c.origin=c.point;
   c.route=route;c.destination=p;c.state='moving';c.point=null;this.stats[id===this.controlledId?'moves':'comMoves']++;return true;
  }
- visible(c,range=145,halfAngle=.62){const o=this.oni,d=dist(c,o),angle=Math.atan2(c.y-o.y,c.x-o.x);const delta=Math.atan2(Math.sin(angle-o.angle),Math.cos(angle-o.angle));return d<range&&Math.abs(delta)<halfAngle&&lineClear(o,c);}
- risk(c){if(!c||c.state==='captured'||c.grace>0)return 0;const near=Math.max(0,1-dist(c,this.oni)/190);if(this.visible(c))return Math.min(1,.46+near*.37+c.exposure*.2);if(this.visible(c,170,.85))return near*.72;return lineClear(this.oni,c)?near*.27:0;}
+ rerouteOccupied(c){
+  const rejected=c.destination;c.deniedUntil=this.elapsed+2;this.stats.occupied++;this.emit('occupied',c.id,{point:rejected});
+  const alternatives=points.map((p,i)=>({i,d:dist(c,p)})).filter(p=>p.i!==rejected&&points[p.i].capacity===1&&this.available(p.i,c.id)&&p.d<150).sort((a,b)=>a.d-b.d);
+  if(c.origin!==null&&c.origin!==rejected&&this.available(c.origin,c.id))alternatives.push({i:c.origin});
+  // If every shelter is taken, an open square is always reachable. Never teleport or overlap.
+  alternatives.push({i:9});
+  for(const {i} of alternatives){const route=pathfind(c,points[i]);if(route.length){c.destination=i;c.route=route;return;}}
+ }
+ visible(c,range=VISION.range,halfAngle=VISION.halfAngle,o=this.oni){const d=dist(c,o),angle=Math.atan2(c.y-o.y,c.x-o.x),delta=Math.atan2(Math.sin(angle-o.angle),Math.cos(angle-o.angle));return d<range&&Math.abs(delta)<halfAngle&&lineClear(o,c);}
+ riskFrom(c,o){if(!c||c.state==='captured'||c.grace>0)return 0;if(o.target===c.id)return 1;const near=Math.max(0,1-dist(c,o)/225);if(this.visible(c,VISION.range,VISION.halfAngle,o))return Math.min(1,.48+near*.38+(c.exposures[o.id]||0)*.24);if(this.visible(c,205,1.05,o))return .42+near*.32;return lineClear(o,c)?near*.28:0;}
+ risk(c){return Math.max(0,...this.onis.map(o=>this.riskFrom(c,o)));}
+ get dangerousOni(){return this.onis.reduce((a,b)=>this.riskFrom(this.controlled,b)>this.riskFrom(this.controlled,a)?b:a);}
  switchControl(){if(this.controlled.state!=='captured')return;const next=this.characters.filter(c=>c.state!=='captured').sort((a,b)=>(a.state==='spotted')-(b.state==='spotted')||(a.state==='moving')-(b.state==='moving')||a.id-b.id)[0];if(next){this.controlledId=next.id;this.stats.switches++;this.focus.remaining=0;this.focus.redirect=false;this.focus.armed=true;this.emit('control',next.id);}}
+ clearTarget(o){o.target=null;o.route=[];o.wait=.7;o.mode='patrol';o.inspect=null;}
  capture(c){if(!c||c.state==='captured'||this.state!=='playing')return;
-  c.state='captured';c.route=[];c.point=null;c.exposure=0;c.grace=0;Object.assign(c,this.rules.capturedPosition(c));
-  this.stats.captures++;this.emit('capture',c.id);if(this.oni.target===c.id){this.oni.target=null;this.oni.route=[];this.oni.wait=.7;this.oni.mode='patrol';this.oni.inspect=null;}
+  c.state='captured';c.route=[];c.point=null;c.exposure=0;c.exposures=[];c.grace=0;Object.assign(c,this.rules.capturedPosition(c));
+  this.stats.captures++;this.emit('capture',c.id);for(const o of this.onis)if(o.target===c.id)this.clearTarget(o);
   this.switchControl();if(this.rules.outcome(this)==='defeat')this.finish('defeat');
  }
  rescue(rescuer){
@@ -79,40 +107,53 @@ export class Game{
   const targets=this.rules.rescueTargets(this);if(!targets.length)return false;
   this.rescueReadyAt=this.elapsed+this.rules.rescueCooldown;this.rescueFlashUntil=this.elapsed+2;
   const exits=[5,1,9,4,8];
-  for(const c of targets){c.state='moving';c.point=null;c.destination=exits[c.id];c.exposure=0;c.grace=this.rules.releaseGrace;c.decision=2+this.random()*3;c.route=pathfind(c,points[c.destination]);if(!c.route.length){Object.assign(c,points[c.destination]);c.point=c.destination;c.state='hidden';}}
+  for(const c of targets){c.state='moving';c.point=null;c.origin=RESCUE_POINT;c.destination=exits[c.id];c.exposure=0;c.exposures=[];c.grace=this.rules.releaseGrace;c.decision=2+this.random()*3;c.route=pathfind(c,points[c.destination]);}
   this.stats.rescues++;this.stats.released+=targets.length;this.emit('rescue',rescuer.id,{count:targets.length});return true;
  }
  updateFocus(dt){const f=this.focus;f.remaining=Math.max(0,f.remaining-dt);f.cooldown=Math.max(0,f.cooldown-dt);this.danger=this.risk(this.controlled);
   if(this.danger<.35)f.armed=true;
   if(f.remaining===0){f.scale=1;f.redirect=false;}
   if(f.remaining===0&&f.cooldown===0&&f.armed&&this.danger>.59&&this.controlled.state!=='spotted'){
-   f.remaining=1.35;f.cooldown=8;f.scale=this.controlled.exposure>.65?.42:.6;f.redirect=true;f.armed=false;this.stats.focuses++;this.emit('focus',this.controlledId);
+   f.remaining=1.35;f.cooldown=8;f.scale=this.controlled.exposure>.45?.42:.6;f.redirect=true;f.armed=false;this.stats.focuses++;this.emit('focus',this.controlledId);
   }
-  if(f.remaining>0&&this.controlled.exposure>.8)f.scale=.42;
+  if(f.remaining>0&&this.controlled.exposure>.5)f.scale=.42;
  }
  finish(reason=this.rules.outcome(this)){const caught=this.characters.filter(c=>c.state==='captured').length;this.result={survivors:5-caught,caught,duration:this.duration,playerSurvived:this.characters[0].state!=='captured',rescues:this.stats.rescues,released:this.stats.released,reason};this.state='ended';this.emit('end');}
  update(realDt){if(this.state!=='playing')return;realDt=Math.max(0,Math.min(realDt,.1));this.elapsed+=realDt;this.remaining=Math.max(0,this.remaining-realDt);
-  // Countdown/cooldowns use real time; every actor, exposure and AI use the same slowed simulation clock.
-  this.updateFocus(realDt);const dt=realDt*this.focus.scale;this.simTime+=dt;const o=this.oni;
-  for(const c of this.characters){if(c.state==='captured')continue;c.grace=Math.max(0,c.grace-dt);walk(c,c.state==='spotted'?0:WALK_SPEED,dt);
-   if(c.state==='moving'&&!c.route.length){c.point=c.destination;c.state='hidden';c.exposure=0;if(c.point===RESCUE_POINT)this.rescue(c);}
+  // Optional rule hook for a future survival mode; no additional mode is exposed in this build.
+  if(this.rules.lateOniAt&&this.remaining/this.duration<=this.rules.lateOniAt&&this.onis.length===2){this.onis.push(this.makeOni(2));this.emit('oni-added',2);}
+  this.updateFocus(realDt);const dt=realDt*this.focus.scale;this.simTime+=dt;
+  for(const c of this.characters){if(c.state==='captured')continue;c.grace=Math.max(0,c.grace-dt);
+   if(c.state==='moving'&&dist(c,points[c.destination])<23&&!this.available(c.destination,c.id))this.rerouteOccupied(c);
+   walk(c,c.state==='spotted'?0:WALK_SPEED,dt);
+   if(c.state==='moving'&&!c.route.length){if(!this.available(c.destination,c.id))this.rerouteOccupied(c);else{c.point=c.destination;c.state='hidden';if(c.point===RESCUE_POINT)this.rescue(c);}}
    if(c.id!==this.controlledId&&c.state!=='spotted'){c.decision-=dt;if(c.decision<=0&&!c.route.length){c.decision=4+this.random()*8;
-    const prisoners=this.rules.rescueTargets(this).length,help=prisoners>0&&this.elapsed>=this.rescueReadyAt&&dist(o,points[RESCUE_POINT])>90;
+    const prisoners=this.rules.rescueTargets(this).length,help=prisoners>0&&this.elapsed>=this.rescueReadyAt&&this.onis.every(o=>dist(o,points[RESCUE_POINT])>90);
     if(help&&this.random()<(prisoners>=3?.8:.42)&&c.point!==RESCUE_POINT){this.move(c.id,RESCUE_POINT);continue;}
-    if(dist(c,o)<118||this.random()<.3){const options=points.map((p,i)=>({i,score:dist(p,o)*.8+p.cover*100+this.random()*80})).filter(p=>p.i!==c.point&&p.i!==RESCUE_POINT).sort((a,b)=>b.score-a.score);this.move(c.id,options[Math.floor(this.random()*3)].i);}
+    if(this.onis.some(o=>dist(c,o)<118)||this.random()<.3){const options=points.map((p,i)=>({i,score:Math.min(...this.onis.map(o=>dist(p,o)))*.8+p.cover*100+this.random()*80})).filter(p=>p.i!==c.point&&p.i!==RESCUE_POINT).sort((a,b)=>b.score-a.score);this.move(c.id,options[Math.floor(this.random()*3)].i);}
    }}
   }
-  if(o.target!==null){const c=this.characters[o.target];if(c.state==='captured'){o.target=null;o.route=[];}else{o.mode='chase';if(!o.route.length)o.route=pathfind(o,c);walk(o,105,dt);if(dist(o,c)<17)this.capture(c);}}
-  else{walk(o,47,dt);if(!o.route.length){o.wait-=dt;if(o.wait<=0){if(o.inspect!==null){o.mode='search';const p=points[o.inspect];o.angle=Math.atan2(p.y-o.y,p.x-o.x);
-    for(const c of this.characters){if(!['captured','spotted'].includes(c.state)&&c.grace===0&&dist(c,p)<37&&dist(o,c)<58&&lineClear(o,c)){this.spot(c);break;}}
-    o.inspect=null;o.wait=1.1;
-   }else{let p=Math.floor(this.random()*points.length);if(p===o.lastPatrol)p=(p+1)%points.length;const target=points[p];let approach={x:target.x+(this.random()-.5)*55,y:target.y+(this.random()-.5)*55};if(blocked(approach.x,approach.y))approach=target;o.route=pathfind(o,approach);o.inspect=p;o.lastPatrol=p;o.wait=1.5+this.random()*1.7;o.mode='patrol';this.stats.patrols++;}}}
-   if(o.target===null){for(const c of this.characters){if(['captured','spotted'].includes(c.state)||c.grace>0)continue;const seen=this.visible(c),cover=c.point===null?0:points[c.point].cover,distance=dist(c,o);
-    if(seen)c.exposure+=dt*(c.state==='moving'?1.8:(1-cover)*.8)*(distance<48?2.3:1);else c.exposure=Math.max(0,c.exposure-dt*.85);
-    if(c.exposure>1.15||seen&&distance<24){this.spot(c);break;}}
+  for(const o of this.onis){
+   if(o.target!==null){const c=this.characters[o.target];if(c.state!=='spotted')this.clearTarget(o);else{o.mode='chase';if(!o.route.length)o.route=pathfind(o,c);walk(o,105,dt);if(dist(o,c)<17)this.capture(c);}}
+   else{walk(o,47,dt);if(!o.route.length){o.wait-=dt;if(o.wait<=0){if(o.inspect!==null){o.mode='search';const p=points[o.inspect];o.angle=Math.atan2(p.y-o.y,p.x-o.x);o.inspect=null;o.wait=1.1;}else{
+    // Home-area preference, with regular cross-area visits and different destinations.
+    let candidates=points.map((p,i)=>({p,i})).filter(v=>v.i!==o.lastPatrol);
+    if(this.random()<.7)candidates=candidates.filter(v=>o.id%2?v.p.y>=390:v.p.y<390);
+    const otherDest=this.onis.filter(other=>other!==o).map(other=>other.lastPatrol);
+    const distinct=candidates.filter(v=>!otherDest.includes(v.i));if(distinct.length)candidates=distinct;
+    const {p:target,i}=candidates[Math.floor(this.random()*candidates.length)];let approach={x:target.x+(this.random()-.5)*55,y:target.y+(this.random()-.5)*55};if(blocked(approach.x,approach.y))approach=target;
+    o.route=pathfind(o,approach);o.inspect=i;o.lastPatrol=i;o.wait=1.5+this.random()*1.7;o.mode='patrol';this.stats.patrols++;
+   }}}}
+   // Each oni owns its notice accumulator, even while chasing. No shared or camera-space vision.
+   for(const c of this.characters){if(['captured','spotted'].includes(c.state)||c.grace>0)continue;
+    const seen=this.visible(c,VISION.range,VISION.halfAngle,o),cover=c.point===null?0:points[c.point].cover;
+    const rate=c.state==='moving'?1.4:Math.max(.32,1.25-cover);
+    c.exposures[o.id]=seen?(c.exposures[o.id]||0)+dt*rate:Math.max(0,(c.exposures[o.id]||0)-dt*.9);
+    c.exposure=Math.max(0,...c.exposures);
+    if(c.exposures[o.id]>=VISION.notice&&o.target===null){this.spot(c,o);break;}
    }
   }
   this.danger=this.risk(this.controlled);const outcome=this.rules.outcome(this);if(outcome&&this.state==='playing')this.finish(outcome);
  }
- spot(c){if(c.grace>0||['captured','spotted'].includes(c.state))return;c.state='spotted';c.route=[];this.oni.target=c.id;this.oni.route=pathfind(this.oni,c);this.oni.mode='chase';this.stats.discoveries++;this.emit('spotted',c.id);}
+ spot(c,o=this.oni){if(c.grace>0||['captured','spotted'].includes(c.state)||o.target!==null)return false;c.state='spotted';c.route=[];o.target=c.id;o.route=pathfind(o,c);o.mode='chase';this.stats.discoveries++;this.emit('spotted',c.id,{oni:o.id});return true;}
 }
