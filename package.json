@@ -1,1 +1,1 @@
-{"name": "hide-and-seek-phase2", "private": true, "type": "module", "scripts": {"test": "node tests/engine.test.js"}}
+{"name": "hide-and-seek-phase2-wide", "private": true, "type": "module", "scripts": {"test": "node tests/engine.test.js && node tests/field.test.js"}}

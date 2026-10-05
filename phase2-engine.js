@@ -1,27 +1,23 @@
-export const W=420,H=600; // Fixed viewport; canvas resolution is unchanged.
-export const WORLD_W=560,WORLD_H=800;
-export const WALK_SPEED=61;
+export const W=420,H=600;
 export const obstacles=[
- {x:30,y:100,w:98,h:75,type:'slide'}, {x:399,y:97,w:108,h:57,type:'swing'},
- {x:30,y:460,w:87,h:100,type:'toilet'}, {x:387,y:407,w:79,h:22,type:'bench'},
- {x:157,y:205,w:48,h:44,type:'tree'}, {x:430,y:648,w:50,h:48,type:'tree'},
- {x:54,y:715,w:42,h:42,type:'tree'}, {x:442,y:283,w:40,h:40,type:'tree'},
- {x:455,y:65,w:44,h:44,type:'tree'}, {x:337,y:582,w:45,h:45,type:'tree'},
- {x:165,y:620,w:58,h:24,type:'bench'}, {x:65,y:615,w:44,h:44,type:'tree'}
+ {x:30,y:100,w:98,h:75,type:'slide'}, {x:269,y:97,w:108,h:57,type:'swing'},
+ {x:30,y:340,w:87,h:100,type:'toilet'}, {x:277,y:327,w:79,h:22,type:'bench'},
+ {x:157,y:205,w:48,h:44,type:'tree'}, {x:296,y:448,w:50,h:48,type:'tree'},
+ {x:54,y:495,w:42,h:42,type:'tree'}, {x:342,y:223,w:40,h:40,type:'tree'}
 ];
 export const points=[
- {x:77,y:193,name:'滑り台の裏',cover:.6}, {x:452,y:177,name:'ブランコ',cover:.18},
- {x:134,y:511,name:'トイレの横',cover:.78}, {x:53,y:275,name:'茂み',cover:.88,bush:true},
- {x:432,y:449,name:'ベンチ',cover:.28}, {x:182,y:272,name:'木の裏',cover:.7},
- {x:412,y:677,name:'大きな木',cover:.72}, {x:107,y:747,name:'入口の木',cover:.65},
+ {x:77,y:193,name:'滑り台の裏',cover:.6}, {x:322,y:177,name:'ブランコ',cover:.18},
+ {x:134,y:391,name:'トイレの横',cover:.78}, {x:53,y:275,name:'茂み',cover:.88,bush:true},
+ {x:322,y:369,name:'ベンチ',cover:.28}, {x:182,y:272,name:'木の裏',cover:.7},
+ {x:278,y:477,name:'大きな木',cover:.72}, {x:107,y:527,name:'入口の木',cover:.65},
  {x:229,y:111,name:'花だんの茂み',cover:.86,bush:true}, {x:215,y:431,name:'広場',cover:.05}
 ];
 const dist=(a,b)=>Math.hypot(a.x-b.x,a.y-b.y);
-const blocked=(x,y,pad=6)=>x<15||x>WORLD_W-15||y<57||y>WORLD_H-23||obstacles.some(o=>x>o.x-pad&&x<o.x+o.w+pad&&y>o.y-pad&&y<o.y+o.h+pad);
+const blocked=(x,y,pad=6)=>x<15||x>405||y<57||y>577||obstacles.some(o=>x>o.x-pad&&x<o.x+o.w+pad&&y>o.y-pad&&y<o.y+o.h+pad);
 function intersects(a,b,o){let t0=0,t1=1;for(const [s,d,min,max] of [[a.x,b.x-a.x,o.x,o.x+o.w],[a.y,b.y-a.y,o.y,o.y+o.h]]){if(Math.abs(d)<.0001){if(s<min||s>max)return false;}else{let lo=(min-s)/d,hi=(max-s)/d;if(lo>hi)[lo,hi]=[hi,lo];t0=Math.max(t0,lo);t1=Math.min(t1,hi);if(t0>t1)return false;}}return true;}
 export function lineClear(a,b){return !obstacles.some(o=>intersects(a,b,o));}
 // Small navigation grid: all characters walk around park equipment, never through it.
-const step=10,cols=Math.ceil(WORLD_W/step),rows=Math.ceil(WORLD_H/step);
+const step=10,cols=42,rows=60;
 export function pathfind(a,b){
  const key=(x,y)=>y*cols+x;const cell=p=>({x:Math.max(0,Math.min(cols-1,Math.floor(p.x/step))),y:Math.max(0,Math.min(rows-1,Math.floor(p.y/step)))});
  const start=cell(a),end=cell(b),queue=[start],seen=new Set([key(start.x,start.y)]),parent=new Map();let found=false;
@@ -34,13 +30,6 @@ function walk(c,speed,dt){let travel=speed*dt;while(c.route.length&&travel>0){co
 export const jail={x:299,y:274,w:88,h:46,slots:[{x:316,y:287},{x:340,y:287},{x:364,y:287},{x:326,y:308},{x:352,y:308}]};
 export const RESCUE_POINT=points.length;
 points.push({x:275,y:292,name:'仲間をたすける',cover:0,rescue:true});
-points.push(
- {x:515,y:85,name:'北の林',cover:.7,area:'林'},
- {x:515,y:349,name:'東の散歩道',cover:.18,area:'散歩道'},
- {x:325,y:642,name:'芝生の木',cover:.65,area:'芝生'},
- {x:195,y:663,name:'休憩ベンチ',cover:.3,area:'休憩所'},
- {x:135,y:637,name:'南の茂み',cover:.86,bush:true,area:'芝生'}
-);
 // Phase 3 rules seam. State transitions and presentation remain independent of mode.
 export const rescueRules={
  id:'park-rescue',rescueEnabled:true,rescueCooldown:6,releaseGrace:2.2,
@@ -94,7 +83,7 @@ export class Game{
  update(realDt){if(this.state!=='playing')return;realDt=Math.max(0,Math.min(realDt,.1));this.elapsed+=realDt;this.remaining=Math.max(0,this.remaining-realDt);
   // Countdown/cooldowns use real time; every actor, exposure and AI use the same slowed simulation clock.
   this.updateFocus(realDt);const dt=realDt*this.focus.scale;this.simTime+=dt;const o=this.oni;
-  for(const c of this.characters){if(c.state==='captured')continue;c.grace=Math.max(0,c.grace-dt);walk(c,c.state==='spotted'?0:WALK_SPEED,dt);
+  for(const c of this.characters){if(c.state==='captured')continue;c.grace=Math.max(0,c.grace-dt);walk(c,c.state==='spotted'?0:61,dt);
    if(c.state==='moving'&&!c.route.length){c.point=c.destination;c.state='hidden';c.exposure=0;if(c.point===RESCUE_POINT)this.rescue(c);}
    if(c.id!==this.controlledId&&c.state!=='spotted'){c.decision-=dt;if(c.decision<=0&&!c.route.length){c.decision=4+this.random()*8;
     const prisoners=this.rules.rescueTargets(this).length,help=prisoners>0&&this.elapsed>=this.rescueReadyAt&&dist(o,points[RESCUE_POINT])>90;

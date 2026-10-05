@@ -1,11 +1,13 @@
-import {Game,W,H,points,obstacles,jail,RESCUE_POINT} from './engine.js';
+import {Camera,mini} from './camera.js';
+import {Game,W,H,points,obstacles,jail,RESCUE_POINT,WORLD_W,WORLD_H} from './engine.js';
 const $=id=>document.getElementById(id),canvas=$('park'),ctx=canvas.getContext('2d');
 let game=new Game(),selectedTime=60,active=false,paused=false,last=0,soundOn=true,audio,beatAt=0,eventIndex=0,toastUntil=0;
+const camera=new Camera();camera.center(game.controlled.x,game.controlled.y);
 const viewSettings={showVision:true}; // Future difficulty modes can turn off the cone.
 const reduced=matchMedia('(prefers-reduced-motion: reduce)').matches;
 function unlock(){try{audio??=new (window.AudioContext||window.webkitAudioContext)();audio.resume().catch(()=>{});}catch{soundOn=false;}}
 function tone(freq,duration=.12,volume=.035,type='sine',delay=0){if(!audio||!soundOn||audio.state!=='running')return;const t=audio.currentTime+delay,osc=audio.createOscillator(),gain=audio.createGain();osc.type=type;osc.frequency.setValueAtTime(freq,t);osc.frequency.exponentialRampToValueAtTime(Math.max(35,freq*.45),t+duration);gain.gain.setValueAtTime(.001,t);gain.gain.exponentialRampToValueAtTime(volume,t+.012);gain.gain.exponentialRampToValueAtTime(.001,t+duration);osc.connect(gain);gain.connect(audio.destination);osc.start(t);osc.stop(t+duration+.02);}
-function start(){unlock();game=new Game(selectedTime);active=true;paused=false;eventIndex=0;beatAt=0;toastUntil=0;$('startPanel').hidden=true;$('resultPanel').hidden=true;$('pause').disabled=false;$('pause').textContent='一時停止';$('hint').textContent='光る場所をタップして移動';tone(420,.2);updateUI();}
+function start(){unlock();game=new Game(selectedTime);camera.follow=true;camera.center(game.controlled.x,game.controlled.y);active=true;paused=false;eventIndex=0;beatAt=0;toastUntil=0;$('startPanel').hidden=true;$('resultPanel').hidden=true;$('pause').disabled=false;$('pause').textContent='一時停止';$('hint').textContent='光る場所をタップして移動';tone(420,.2);updateUI();}
 function go(p){if(!active||paused)return;if(game.move(game.controlledId,p)){tone(510,.07,.02);$('hint').textContent=points[p].name+'へ移動中…';}else if(game.controlled.state==='moving'){showToast('移動が終わったら、次の場所を選ぼう');}}
 function showToast(text){$('hint').textContent=text;toastUntil=game.elapsed+3;}
 $('start').onclick=start;$('again').onclick=start;$('back').onclick=()=>{active=false;$('resultPanel').hidden=true;$('startPanel').hidden=false;$('pause').disabled=true;game=new Game(selectedTime);updateUI();};
@@ -13,8 +15,20 @@ for(const b of document.querySelectorAll('[data-time]'))b.onclick=()=>{selectedT
 $('sound').onclick=()=>{soundOn=!soundOn;if(soundOn)unlock();$('sound').textContent=soundOn?'♪ ON':'♪ OFF';$('sound').setAttribute('aria-pressed',String(soundOn));$('sound').setAttribute('aria-label',soundOn?'音を切る':'音を出す');};
 function pause(){if(!active||game.state==='ended')return;paused=!paused;$('pause').textContent=paused?'再開 ▶':'一時停止';$('hint').textContent=paused?'一時停止中': '光る場所をタップして移動';if(!paused)unlock();}
 $('pause').onclick=pause;document.addEventListener('visibilitychange',()=>{if(document.hidden&&active&&!paused&&game.state==='playing')pause();});
-points.forEach((p,i)=>{const b=document.createElement('button');b.textContent=p.name;b.onclick=()=>go(i);$('locations').append(b);});
-canvas.addEventListener('pointerup',e=>{const r=canvas.getBoundingClientRect(),p={x:(e.clientX-r.left)*W/r.width,y:(e.clientY-r.top)*H/r.height};let closest=-1,d=Infinity;points.forEach((n,i)=>{const nd=Math.hypot(n.x-p.x,n.y-p.y);if(nd<d){d=nd;closest=i;}});if(d<Math.max(30,22*W/r.width))go(closest);});
+points.forEach((p,i)=>{const b=document.createElement('button');b.textContent=p.name;b.onclick=()=>{go(i);document.querySelector('details').open=false;document.querySelector('header').scrollIntoView({block:'start',behavior:'auto'});};$('locations').append(b);});
+let drag=null;
+canvas.addEventListener('pointerdown',e=>{const r=canvas.getBoundingClientRect();drag={id:e.pointerId,x:e.clientX,y:e.clientY,lastX:e.clientX,lastY:e.clientY,moved:false,sx:(e.clientX-r.left)*W/r.width,sy:(e.clientY-r.top)*H/r.height};canvas.setPointerCapture(e.pointerId);});
+canvas.addEventListener('pointermove',e=>{if(!drag||drag.id!==e.pointerId)return;const r=canvas.getBoundingClientRect();if(Math.hypot(e.clientX-drag.x,e.clientY-drag.y)>8)drag.moved=true;if(drag.moved){camera.pan((drag.lastX-e.clientX)*W/r.width,(drag.lastY-e.clientY)*H/r.height);drag.lastX=e.clientX;drag.lastY=e.clientY;}});
+canvas.addEventListener('pointercancel',()=>drag=null);
+canvas.addEventListener('pointerup',e=>{if(!drag)return;const gesture=drag;drag=null;if(gesture.moved)return;
+ const r=canvas.getBoundingClientRect(),sx=(e.clientX-r.left)*W/r.width,sy=(e.clientY-r.top)*H/r.height;
+ if(sx>=mini.x&&sx<=mini.x+mini.w&&sy>=mini.y&&sy<=mini.y+mini.h){camera.follow=false;camera.center((sx-mini.x)/mini.w*WORLD_W,(sy-mini.y)/mini.h*WORLD_H);return;}
+ const p=camera.world(sx,sy);let closest=-1,d=Infinity;points.forEach((n,i)=>{const screen=camera.screen(n.x,n.y);if(screen.x<0||screen.x>W||screen.y<0||screen.y>H)return;const nd=Math.hypot(n.x-p.x,n.y-p.y);if(nd<d){d=nd;closest=i;}});
+ if(d<Math.max(30,22*W/r.width))go(closest);
+});
+function resumeFollow(){camera.follow=true;showToast('青い帽子を追いかける');}
+$('follow').onclick=resumeFollow;
+$('follow').onpointerup=e=>{e.preventDefault();resumeFollow();};
 function updateUI(){const c=game.controlled,prisoners=game.characters.filter(c=>c.state==='captured').length,focused=game.focus.remaining>0;
  $('clock').textContent=`${Math.floor(Math.ceil(game.remaining)/60)}:${String(Math.ceil(game.remaining)%60).padStart(2,'0')}`;
  $('clock').style.color=game.remaining<=10&&active?'#ff9e8b':'';
@@ -49,28 +63,39 @@ function drawJail(){const count=game.characters.filter(c=>c.state==='captured').
  for(let x=jail.x+13;x<jail.x+jail.w;x+=16)line(x,jail.y+3,x,jail.y+jail.h-3,count?'#b69a7d':'#87796e',2);
  text(flash?'たすけた！':count?`牢屋 · ${count}人`:'鬼の牢屋',jail.x+jail.w/2,jail.y-8,11,flash?'#fff8bc':'#f2d1a6');
 }
-function draw(t){ctx.setTransform(2,0,0,2,0,0);ctx.clearRect(0,0,W,H);ctx.save();if(!reduced&&active&&!paused&&game.danger>.8){ctx.translate(Math.sin(t*28)*.7,Math.cos(t*24)*.5);}const bg=ctx.createLinearGradient(0,0,W,H);bg.addColorStop(0,'#9b8e60');bg.addColorStop(.5,'#767d55');bg.addColorStop(1,'#555c4e');ctx.fillStyle=bg;ctx.fillRect(0,0,W,H);
+function drawMapHUD(){
+ rect(mini.x-4,mini.y-19,mini.w+8,mini.h+24,'#242435dc',8);text('全体 · タップで見る',mini.x+mini.w/2,mini.y-7,8,'#dbc9ab');rect(mini.x,mini.y,mini.w,mini.h,'#707b54',3);
+ const px=x=>mini.x+x/WORLD_W*mini.w,py=y=>mini.y+y/WORLD_H*mini.h;
+ obstacles.forEach(o=>rect(px(o.x),py(o.y),o.w/WORLD_W*mini.w,o.h/WORLD_H*mini.h,'#434e42'));
+ points.forEach(p=>circle(px(p.x),py(p.y),1.5,p.rescue?'#f6e4a0':'#d4c99a'));
+ game.characters.forEach(c=>circle(px(c.x),py(c.y),c.id===game.controlledId?3:2,c.state==='captured'?'#a48ca5':c.id===game.controlledId?'#84e3ff':'#f4c581'));
+ circle(px(game.oni.x),py(game.oni.y),3,'#ff8775');ctx.strokeStyle='#dbe8d4';ctx.lineWidth=1;ctx.strokeRect(px(camera.x),py(camera.y),W/WORLD_W*mini.w,H/WORLD_H*mini.h);
+ const o=camera.screen(game.oni.x,game.oni.y);if(o.x<20||o.x>W-20||o.y<45||o.y>H-40){const x=Math.max(18,Math.min(W-18,o.x)),y=Math.max(48,Math.min(H-36,o.y));circle(x,y,13,'#603641dd');text('鬼',x,y+4,11,'#ffc39c');}
+ $('follow').hidden=camera.follow;
+}
+function draw(t){ctx.setTransform(2,0,0,2,0,0);ctx.clearRect(0,0,W,H);ctx.save();if(!reduced&&active&&!paused&&game.danger>.8){ctx.translate(Math.sin(t*28)*.7,Math.cos(t*24)*.5);}ctx.translate(-camera.x,-camera.y);const bg=ctx.createLinearGradient(0,0,WORLD_W,WORLD_H);bg.addColorStop(0,'#9b8e60');bg.addColorStop(.5,'#767d55');bg.addColorStop(1,'#555c4e');ctx.fillStyle=bg;ctx.fillRect(0,0,WORLD_W,WORLD_H);
  // park wall, looping footpath and small scenery
- rect(12,49,396,534,'#424b4355',18);rect(20,57,380,517,'#75805b',13);ctx.strokeStyle='#b9a280';ctx.lineWidth=30;ctx.lineJoin='round';ctx.beginPath();ctx.moveTo(218,579);ctx.lineTo(218,310);ctx.lineTo(145,310);ctx.lineTo(145,80);ctx.lineTo(252,80);ctx.lineTo(252,310);ctx.lineTo(369,310);ctx.lineTo(369,551);ctx.lineTo(145,551);ctx.stroke();ctx.strokeStyle='#baa78555';ctx.lineWidth=1;ctx.stroke();
- for(let i=0;i<80;i++){const x=24+(i*73%369),y=68+(i*113%492);line(x,y,x+2,y-4,'#d4c38b22',1);}
- rect(12,36,396,11,'#514e51',3);for(let x=18;x<405;x+=18)rect(x,24,3,27,'#6c6260',1);text('夕暮れ公園',210,24,12,'#f9d8a6');rect(180,574,75,23,'#baa785',3);text('入口',218,590,10,'#5c574d');bush(53,275);bush(229,111);
+ rect(12,49,WORLD_W-24,WORLD_H-66,'#424b4355',18);rect(20,57,WORLD_W-40,WORLD_H-83,'#75805b',13);ctx.strokeStyle='#b9a280';ctx.lineWidth=30;ctx.lineJoin='round';ctx.beginPath();ctx.moveTo(260,779);ctx.lineTo(218,310);ctx.lineTo(145,310);ctx.lineTo(145,80);ctx.lineTo(252,80);ctx.lineTo(252,310);ctx.lineTo(505,310);ctx.lineTo(505,731);ctx.lineTo(145,731);ctx.stroke();ctx.strokeStyle='#baa78555';ctx.lineWidth=1;ctx.stroke();
+ for(let i=0;i<140;i++){const x=24+(i*73%(WORLD_W-51)),y=68+(i*113%(WORLD_H-108));line(x,y,x+2,y-4,'#d4c38b22',1);}
+ rect(12,36,WORLD_W-24,11,'#514e51',3);for(let x=18;x<WORLD_W-15;x+=18)rect(x,24,3,27,'#6c6260',1);text('夕暮れ公園',210,24,12,'#f9d8a6');rect(222,774,75,23,'#baa785',3);text('入口',260,790,10,'#5c574d');bush(53,275);bush(229,111);bush(135,637);text('北の林',455,50,14,'#e8cca0');text('芝生ひろば',290,565,14,'#ebd1a5');text('休憩エリア',195,695,12,'#e8cca0');
+ line(252,80,505,80,'#b9a280',22);line(260,431,260,735,'#baa785',24);line(145,637,260,637,'#baa785',20);
  // Movement routes preview while walking.
  const player=game.controlled;if(player.route.length){ctx.setLineDash([3,6]);ctx.strokeStyle='#b3e6e78c';ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(player.x,player.y);for(const p of player.route)ctx.lineTo(p.x,p.y);ctx.stroke();ctx.setLineDash([]);}
  obstacles.forEach(equipment);drawJail();
  points.forEach((p,i)=>{const chosen=player.destination===i;const pulse=reduced?0:Math.sin(t*2.5+i)*1.7;circle(p.x,p.y,22+pulse,'#faf0b40d');ctx.strokeStyle=chosen?'#b5edff':'#e9d7a68c';ctx.lineWidth=chosen?2.5:1.5;ctx.setLineDash(chosen?[]:[3,4]);ctx.beginPath();ctx.arc(p.x,p.y,20,0,Math.PI*2);ctx.stroke();ctx.setLineDash([]);circle(p.x,p.y,4,chosen?'#b5edff':'#e4d6a6');if(p.bush)text('茂み',p.x,p.y+34,10);if(p.rescue){const prisoners=game.characters.filter(c=>c.state==='captured').length;circle(p.x,p.y,19,prisoners?'#f6d98e55':'#f6d98e15');circle(p.x-4,p.y,5,'#ffe3a0');circle(p.x-4,p.y,2,'#756146');line(p.x+1,p.y,p.x+10,p.y,'#ffe3a0',3);line(p.x+7,p.y,p.x+7,p.y+4,'#ffe3a0',3);text('たすける',p.x,p.y+34,10,prisoners?'#fff0ac':'#d0baa1');}});
  oni();[...game.characters].sort((a,b)=>a.y-b.y).forEach(character);
- const dusk=ctx.createLinearGradient(0,0,W,H);dusk.addColorStop(0,'#eb965313');dusk.addColorStop(1,'#22274322');ctx.fillStyle=dusk;ctx.fillRect(0,0,W,H);ctx.restore();}
+ const dusk=ctx.createLinearGradient(0,0,WORLD_W,WORLD_H);dusk.addColorStop(0,'#eb965313');dusk.addColorStop(1,'#22274322');ctx.fillStyle=dusk;ctx.fillRect(0,0,WORLD_W,WORLD_H);ctx.restore();drawMapHUD();}
 let uiTimer=0;function frame(now){const dt=Math.min((now-last)/1000||0,.05);last=now;if(active&&!paused){game.update(dt);
  let controlEvent=null;for(const e of game.events.filter(e=>e.seq>eventIndex)){eventIndex=e.seq;
   if(e.type==='spotted'){tone(360,.2,.035,'triangle');showToast(e.id===game.controlledId?'！見つかった！':`仲間${e.id}が見つかった！`);}
   if(e.type==='capture'){tone(120,.2,.035);showToast(`${e.id===0?'あなた':`仲間${e.id}`}が牢屋へ…`);}
-  if(e.type==='control'){tone(470,.13);controlEvent=e;}
+  if(e.type==='control'){tone(470,.13);controlEvent=e;camera.follow=true;}
   if(e.type==='rescue'){tone(540,.16,.025);tone(720,.22,.025,'sine',.12);showToast(`たすけた！ ${e.count}人が自由に！`);}
   if(e.type==='focus'){tone(90,.19,.05);showToast('！見つかりそう · 次の場所を選ぼう');}
  }
- if(controlEvent&&game.state==='playing')showToast(`青い帽子の仲間${controlEvent.id}に交代！ たすけに行こう`);
+ if(controlEvent&&game.state==='playing')showToast(`捕まった！ 青い帽子の仲間${controlEvent.id}へ交代`);
  if(game.state==='ended')end();
  if(game.danger>.25&&game.elapsed>beatAt){const focus=game.focus.remaining>0,interval=focus?.38:1.3-game.danger*.85;beatAt=game.elapsed+interval;tone(75,.13,focus?.045:.02+game.danger*.018);tone(60,.12,focus?.035:.018,'sine',.15);}
  }
- uiTimer+=dt;if(uiTimer>.1){updateUI();uiTimer=0;}draw(now/1000);requestAnimationFrame(frame);}updateUI();requestAnimationFrame(frame);
+ uiTimer+=dt;if(uiTimer>.1){updateUI();uiTimer=0;}camera.track(game.controlled,dt);draw(now/1000);requestAnimationFrame(frame);}updateUI();requestAnimationFrame(frame);
 if('serviceWorker'in navigator&&location.protocol!=='file:')navigator.serviceWorker.register('./sw.js').catch(()=>{});

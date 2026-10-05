@@ -1,0 +1,24 @@
+{
+  "before": {
+    "logicalSize": [
+      420,
+      600
+    ],
+    "routeLength": 870,
+    "timeSeconds": 14.27
+  },
+  "after": {
+    "logicalSize": [
+      560,
+      800
+    ],
+    "routeLength": 1210,
+    "timeSeconds": 19.84
+  },
+  "areaMultiplier": 1.7777777777777777,
+  "travelMultiplier": 1.3903293622985284,
+  "canvas": [
+    840,
+    1200
+  ]
+}
