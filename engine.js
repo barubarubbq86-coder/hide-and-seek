@@ -26,19 +26,82 @@ export function pathfind(a,b){
  let n=end,route=[];while(n.x!==start.x||n.y!==start.y){route.push({x:n.x*step+5,y:n.y*step+5});n=parent.get(key(n.x,n.y));}route.reverse();route.push({x:b.x,y:b.y});return route;
 }
 function walk(c,speed,dt){let travel=speed*dt;while(c.route.length&&travel>0){const p=c.route[0],d=dist(c,p);if(d>0)c.angle=Math.atan2(p.y-c.y,p.x-c.x);if(d<=travel){c.x=p.x;c.y=p.y;c.route.shift();travel-=d;}else{c.x+=(p.x-c.x)*travel/d;c.y+=(p.y-c.y)*travel/d;travel=0;}}}
+
+export const jail={x:299,y:274,w:88,h:46,slots:[{x:316,y:287},{x:340,y:287},{x:364,y:287},{x:326,y:308},{x:352,y:308}]};
+export const RESCUE_POINT=points.length;
+points.push({x:275,y:292,name:'仲間をたすける',cover:0,rescue:true});
+// Phase 3 rules seam. State transitions and presentation remain independent of mode.
+export const rescueRules={
+ id:'park-rescue',rescueEnabled:true,rescueCooldown:6,releaseGrace:2.2,
+ capturedPosition(character){return jail.slots[character.id];},
+ rescueTargets(game){return game.characters.filter(c=>c.state==='captured');},
+ outcome(game){if(game.characters.every(c=>c.state==='captured'))return 'defeat';if(game.remaining<=0)return 'timeout';return null;}
+};
 export class Game{
- constructor(seconds=60,random=Math.random){this.random=random;this.duration=seconds;this.remaining=seconds;this.elapsed=0;this.state='playing';this.events=[];this.characters=[7,0,2,6,8].map((p,i)=>({id:i,x:points[p].x,y:points[p].y,point:p,destination:p,route:[],angle:0,state:'hidden',exposure:0,decision:2+i*1.4}));this.oni={x:215,y:320,angle:-Math.PI/2,route:[],target:null,mode:'patrol',wait:2,inspect:null};this.danger=0;this.result=null;this.stats={moves:0,comMoves:0,discoveries:0,captures:0,patrols:0};}
- move(id,p){const c=this.characters[id];if(this.state!=='playing'||!c||c.state==='captured'||c.state==='spotted'||c.route.length||p===c.point)return false;const route=pathfind(c,points[p]);if(!route.length)return false;c.route=route;c.destination=p;c.state='moving';c.point=null;this.stats[id===0?'moves':'comMoves']++;return true;}
- emit(type,id){this.events.push({type,id,time:this.elapsed});if(this.events.length>40)this.events.shift();}
- visible(c){const o=this.oni,d=dist(c,o),angle=Math.atan2(c.y-o.y,c.x-o.x);const delta=Math.atan2(Math.sin(angle-o.angle),Math.cos(angle-o.angle));return d<145&&Math.abs(delta)<.62&&lineClear(o,c);}
- finish(){const caught=this.characters.filter(c=>c.state==='captured').length;this.result={survivors:5-caught,caught,duration:this.duration,playerSurvived:this.characters[0].state!=='captured'};this.state='ended';this.emit('end');}
- update(dt){if(this.state!=='playing')return;dt=Math.min(dt,.1);this.elapsed+=dt;this.remaining=Math.max(0,this.remaining-dt);const o=this.oni;
- for(const c of this.characters){if(c.state==='captured')continue;walk(c,c.state==='spotted'?0:61,dt);if(c.state==='moving'&&!c.route.length){c.point=c.destination;c.state='hidden';c.exposure=0;}
- if(c.id>0&&c.state!=='spotted'){c.decision-=dt;if(c.decision<=0&&!c.route.length){c.decision=4+this.random()*8;const near=dist(c,o)<118; if(near||this.random()<.3){const candidates=points.map((p,i)=>({i,score:dist(p,o)*.8+p.cover*100+this.random()*80})).filter(p=>p.i!==c.point).sort((a,b)=>b.score-a.score);this.move(c.id,candidates[Math.floor(this.random()*3)].i);}}}}
- if(o.target!==null){const c=this.characters[o.target];o.mode='chase';if(!o.route.length)o.route=pathfind(o,c);walk(o,105,dt);if(dist(o,c)<17){c.state='captured';c.route=[];this.stats.captures++;this.emit('capture',c.id);o.target=null;o.route=[];o.wait=.7;o.mode='patrol';}}
- else{walk(o,47,dt);if(!o.route.length){o.wait-=dt;if(o.wait<=0){if(o.inspect!==null){o.mode='search';const p=points[o.inspect];o.angle=Math.atan2(p.y-o.y,p.x-o.x);for(const c of this.characters){if(c.state!=='captured'&&dist(c,p)<37&&dist(o,c)<58&&lineClear(o,c)){this.spot(c);break;}}o.inspect=null;o.wait=1.1;}else{const p=Math.floor(this.random()*points.length),target=points[p];let approach={x:target.x+(this.random()-.5)*55,y:target.y+(this.random()-.5)*55};if(blocked(approach.x,approach.y))approach=target;o.route=pathfind(o,approach);o.inspect=p;o.wait=1.5+this.random()*1.7;o.mode='patrol';this.stats.patrols++;}}}
- if(o.target===null){for(const c of this.characters){if(c.state==='captured'||c.state==='spotted')continue;const seen=this.visible(c);const cover=c.point===null?0:points[c.point].cover;const distance=dist(c,o);if(seen){c.exposure+=dt*(c.state==='moving'?1.8:(1-cover)*.8)*(distance<48?2.3:1);}else c.exposure=Math.max(0,c.exposure-dt*.85);if(c.exposure>1.15||seen&&distance<24){this.spot(c);break;}}}}
- const player=this.characters[0];this.danger=player.state==='captured'?0:Math.max(0,1-dist(player,o)/200);if(this.visible(player))this.danger=Math.min(1,this.danger+.17);
- if(this.characters.every(c=>c.state==='captured')||this.remaining<=0)this.finish();}
- spot(c){c.state='spotted';c.route=[];this.oni.target=c.id;this.oni.route=pathfind(this.oni,c);this.oni.mode='chase';this.stats.discoveries++;this.emit('spotted',c.id);}
+ constructor(seconds=60,random=Math.random,rules=rescueRules){
+  this.random=random;this.rules=rules;this.duration=seconds;this.remaining=seconds;this.elapsed=0;this.simTime=0;this.state='playing';
+  this.events=[];this.nextEvent=1;this.controlledId=0;this.rescueReadyAt=0;this.rescueFlashUntil=0;
+  this.focus={remaining:0,cooldown:0,scale:1,redirect:false,armed:true};
+  this.characters=[7,0,2,6,8].map((p,i)=>({id:i,x:points[p].x,y:points[p].y,point:p,destination:p,route:[],angle:0,state:'hidden',exposure:0,decision:2+i*1.4,grace:0}));
+  this.oni={x:215,y:320,angle:-Math.PI/2,route:[],target:null,mode:'patrol',wait:2,inspect:null,lastPatrol:null};
+  this.danger=0;this.result=null;this.stats={moves:0,comMoves:0,discoveries:0,captures:0,patrols:0,rescues:0,released:0,switches:0,focuses:0};
+ }
+ get controlled(){return this.characters[this.controlledId];}
+ emit(type,id,extra={}){this.events.push({seq:this.nextEvent++,type,id,time:this.elapsed,...extra});if(this.events.length>100)this.events.shift();}
+ move(id,p){
+  const c=this.characters[id],redirect=id===this.controlledId&&this.focus.remaining>0&&this.focus.redirect;
+  if(this.state!=='playing'||!c||!points[p]||['captured','spotted'].includes(c.state)||c.route.length&&!redirect||p===c.point)return false;
+  const route=pathfind(c,points[p]);if(!route.length)return false;
+  if(c.route.length&&redirect)this.focus.redirect=false;
+  c.route=route;c.destination=p;c.state='moving';c.point=null;this.stats[id===this.controlledId?'moves':'comMoves']++;return true;
+ }
+ visible(c,range=145,halfAngle=.62){const o=this.oni,d=dist(c,o),angle=Math.atan2(c.y-o.y,c.x-o.x);const delta=Math.atan2(Math.sin(angle-o.angle),Math.cos(angle-o.angle));return d<range&&Math.abs(delta)<halfAngle&&lineClear(o,c);}
+ risk(c){if(!c||c.state==='captured'||c.grace>0)return 0;const near=Math.max(0,1-dist(c,this.oni)/190);if(this.visible(c))return Math.min(1,.46+near*.37+c.exposure*.2);if(this.visible(c,170,.85))return near*.72;return lineClear(this.oni,c)?near*.27:0;}
+ switchControl(){if(this.controlled.state!=='captured')return;const next=this.characters.filter(c=>c.state!=='captured').sort((a,b)=>(a.state==='spotted')-(b.state==='spotted')||(a.state==='moving')-(b.state==='moving')||a.id-b.id)[0];if(next){this.controlledId=next.id;this.stats.switches++;this.focus.remaining=0;this.focus.redirect=false;this.focus.armed=true;this.emit('control',next.id);}}
+ capture(c){if(!c||c.state==='captured'||this.state!=='playing')return;
+  c.state='captured';c.route=[];c.point=null;c.exposure=0;c.grace=0;Object.assign(c,this.rules.capturedPosition(c));
+  this.stats.captures++;this.emit('capture',c.id);if(this.oni.target===c.id){this.oni.target=null;this.oni.route=[];this.oni.wait=.7;this.oni.mode='patrol';this.oni.inspect=null;}
+  this.switchControl();if(this.rules.outcome(this)==='defeat')this.finish('defeat');
+ }
+ rescue(rescuer){
+  if(!this.rules.rescueEnabled||this.state!=='playing'||rescuer.state!=='hidden'||rescuer.point!==RESCUE_POINT||dist(rescuer,points[RESCUE_POINT])>12||this.elapsed<this.rescueReadyAt)return false;
+  const targets=this.rules.rescueTargets(this);if(!targets.length)return false;
+  this.rescueReadyAt=this.elapsed+this.rules.rescueCooldown;this.rescueFlashUntil=this.elapsed+2;
+  const exits=[5,1,9,4,8];
+  for(const c of targets){c.state='moving';c.point=null;c.destination=exits[c.id];c.exposure=0;c.grace=this.rules.releaseGrace;c.decision=2+this.random()*3;c.route=pathfind(c,points[c.destination]);if(!c.route.length){Object.assign(c,points[c.destination]);c.point=c.destination;c.state='hidden';}}
+  this.stats.rescues++;this.stats.released+=targets.length;this.emit('rescue',rescuer.id,{count:targets.length});return true;
+ }
+ updateFocus(dt){const f=this.focus;f.remaining=Math.max(0,f.remaining-dt);f.cooldown=Math.max(0,f.cooldown-dt);this.danger=this.risk(this.controlled);
+  if(this.danger<.35)f.armed=true;
+  if(f.remaining===0){f.scale=1;f.redirect=false;}
+  if(f.remaining===0&&f.cooldown===0&&f.armed&&this.danger>.59&&this.controlled.state!=='spotted'){
+   f.remaining=1.35;f.cooldown=8;f.scale=this.controlled.exposure>.65?.42:.6;f.redirect=true;f.armed=false;this.stats.focuses++;this.emit('focus',this.controlledId);
+  }
+  if(f.remaining>0&&this.controlled.exposure>.8)f.scale=.42;
+ }
+ finish(reason=this.rules.outcome(this)){const caught=this.characters.filter(c=>c.state==='captured').length;this.result={survivors:5-caught,caught,duration:this.duration,playerSurvived:this.characters[0].state!=='captured',rescues:this.stats.rescues,released:this.stats.released,reason};this.state='ended';this.emit('end');}
+ update(realDt){if(this.state!=='playing')return;realDt=Math.max(0,Math.min(realDt,.1));this.elapsed+=realDt;this.remaining=Math.max(0,this.remaining-realDt);
+  // Countdown/cooldowns use real time; every actor, exposure and AI use the same slowed simulation clock.
+  this.updateFocus(realDt);const dt=realDt*this.focus.scale;this.simTime+=dt;const o=this.oni;
+  for(const c of this.characters){if(c.state==='captured')continue;c.grace=Math.max(0,c.grace-dt);walk(c,c.state==='spotted'?0:61,dt);
+   if(c.state==='moving'&&!c.route.length){c.point=c.destination;c.state='hidden';c.exposure=0;if(c.point===RESCUE_POINT)this.rescue(c);}
+   if(c.id!==this.controlledId&&c.state!=='spotted'){c.decision-=dt;if(c.decision<=0&&!c.route.length){c.decision=4+this.random()*8;
+    const prisoners=this.rules.rescueTargets(this).length,help=prisoners>0&&this.elapsed>=this.rescueReadyAt&&dist(o,points[RESCUE_POINT])>90;
+    if(help&&this.random()<(prisoners>=3?.8:.42)&&c.point!==RESCUE_POINT){this.move(c.id,RESCUE_POINT);continue;}
+    if(dist(c,o)<118||this.random()<.3){const options=points.map((p,i)=>({i,score:dist(p,o)*.8+p.cover*100+this.random()*80})).filter(p=>p.i!==c.point&&p.i!==RESCUE_POINT).sort((a,b)=>b.score-a.score);this.move(c.id,options[Math.floor(this.random()*3)].i);}
+   }}
+  }
+  if(o.target!==null){const c=this.characters[o.target];if(c.state==='captured'){o.target=null;o.route=[];}else{o.mode='chase';if(!o.route.length)o.route=pathfind(o,c);walk(o,105,dt);if(dist(o,c)<17)this.capture(c);}}
+  else{walk(o,47,dt);if(!o.route.length){o.wait-=dt;if(o.wait<=0){if(o.inspect!==null){o.mode='search';const p=points[o.inspect];o.angle=Math.atan2(p.y-o.y,p.x-o.x);
+    for(const c of this.characters){if(!['captured','spotted'].includes(c.state)&&c.grace===0&&dist(c,p)<37&&dist(o,c)<58&&lineClear(o,c)){this.spot(c);break;}}
+    o.inspect=null;o.wait=1.1;
+   }else{let p=Math.floor(this.random()*points.length);if(p===o.lastPatrol)p=(p+1)%points.length;const target=points[p];let approach={x:target.x+(this.random()-.5)*55,y:target.y+(this.random()-.5)*55};if(blocked(approach.x,approach.y))approach=target;o.route=pathfind(o,approach);o.inspect=p;o.lastPatrol=p;o.wait=1.5+this.random()*1.7;o.mode='patrol';this.stats.patrols++;}}}
+   if(o.target===null){for(const c of this.characters){if(['captured','spotted'].includes(c.state)||c.grace>0)continue;const seen=this.visible(c),cover=c.point===null?0:points[c.point].cover,distance=dist(c,o);
+    if(seen)c.exposure+=dt*(c.state==='moving'?1.8:(1-cover)*.8)*(distance<48?2.3:1);else c.exposure=Math.max(0,c.exposure-dt*.85);
+    if(c.exposure>1.15||seen&&distance<24){this.spot(c);break;}}
+   }
+  }
+  this.danger=this.risk(this.controlled);const outcome=this.rules.outcome(this);if(outcome&&this.state==='playing')this.finish(outcome);
+ }
+ spot(c){if(c.grace>0||['captured','spotted'].includes(c.state))return;c.state='spotted';c.route=[];this.oni.target=c.id;this.oni.route=pathfind(this.oni,c);this.oni.mode='chase';this.stats.discoveries++;this.emit('spotted',c.id);}
 }

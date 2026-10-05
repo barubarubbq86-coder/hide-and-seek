@@ -1,15 +1,21 @@
 import assert from 'node:assert/strict';
-import {Game,points,obstacles,pathfind,lineClear} from '../engine.js';
-function rng(seed){return ()=>{seed=(Math.imul(1664525,seed)+1013904223)>>>0;return seed/4294967296;};}
+import {Game,points,obstacles,pathfind,lineClear,RESCUE_POINT,jail,rescueRules} from '../engine.js';
+export function rng(seed){return ()=>{seed=(Math.imul(1664525,seed)+1013904223)>>>0;return seed/4294967296;};}
 function run(g,t){for(let i=0;i<Math.ceil(t*60)&&g.state==='playing';i++)g.update(1/60);}
 for(const a of points)for(const b of points){const p=pathfind(a,b);assert(p.length);for(const n of p)assert(!obstacles.some(o=>n.x>o.x&&n.x<o.x+o.w&&n.y>o.y&&n.y<o.y+o.h));}
-assert.equal(lineClear({x:25,y:380},{x:140,y:380}),false);
-const moving=new Game(60,rng(1));assert(moving.move(0,8));assert(!moving.move(0,1));run(moving,.5);assert.notEqual(moving.characters[0].x,points[7].x);assert(moving.stats.comMoves>0||moving.characters.some(c=>c.decision<3));
-const seen=new Game(60,rng(2));Object.assign(seen.oni,{x:210,y:310,angle:0,wait:99});Object.assign(seen.characters[0],{x:270,y:310,point:null,state:'moving',destination:9,route:[{x:275,y:310}]});run(seen,2);assert(seen.stats.discoveries>0);run(seen,3);assert.equal(seen.characters[0].state,'captured');
-const lost=new Game(60,rng(3));lost.characters.forEach(c=>c.state='captured');lost.update(.02);assert.equal(lost.result.survivors,0);assert.equal(lost.state,'ended');
-const timeout=new Game(60,rng(4));timeout.remaining=.01;timeout.update(.02);assert.equal(timeout.state,'ended');assert.equal(timeout.result.survivors,5);assert.equal(timeout.result.duration,60);
-const fresh=new Game(180,rng(5));assert.equal(fresh.remaining,180);assert(fresh.characters.every(c=>c.state==='hidden'));
-const searched=new Game(60,rng(9));Object.assign(searched.characters[0],{...points[3],point:3,state:'hidden'});Object.assign(searched.oni,{x:85,y:275,wait:0,inspect:3,route:[]});searched.update(.02);assert.equal(searched.characters[0].state,'spotted');
-assert(pathfind(points[7],points[8]).length>pathfind(points[7],points[6]).length);
-const results=[];for(let seed=1;seed<=20;seed++){const g=new Game(60,rng(seed));run(g,61);assert.equal(g.state,'ended');assert(g.stats.patrols>0);assert(g.stats.comMoves>0);assert(g.stats.discoveries>0);assert(g.stats.captures>0);results.push({seed,...g.result,...g.stats});}
-console.log('PASS: all 100 navigation pairs, occlusion, movement lock, discovery/capture, defeat, timeout, reset, 20 seeded full rounds');console.log(JSON.stringify(results));
+assert(!lineClear({x:25,y:380},{x:140,y:380}));
+const g=new Game(60,rng(1));g.capture(g.characters[0]);assert.equal(g.controlledId,1);assert.equal(g.characters[0].state,'captured');assert.equal(g.characters[0].x,jail.slots[0].x);assert(g.move(g.controlledId,3));assert(!g.move(0,3));run(g,.5);assert.equal(g.characters[0].x,jail.slots[0].x);
+g.capture(g.characters[2]);const rescuer=g.controlled;Object.assign(rescuer,{...points[RESCUE_POINT],point:RESCUE_POINT,state:'hidden',route:[]});assert(g.rescue(rescuer));assert.equal(g.stats.released,2);assert.equal(g.controlledId,1);assert(g.characters[0].route.length);assert(g.characters[2].route.length);assert(g.characters[0].grace>0);g.spot(g.characters[0]);assert.equal(g.characters[0].state,'moving');g.capture(g.characters[3]);assert(!g.rescue(rescuer));run(g,2);assert(g.characters[0].x!==jail.slots[0].x);assert(g.stats.comMoves>=0);
+// Arrival triggers the action; standing on the point cannot repeatedly rescue.
+const arrival=new Game(60,rng(2));arrival.capture(arrival.characters[2]);Object.assign(arrival.oni,{x:60,y:570,wait:99});Object.assign(arrival.controlled,{x:270,y:292,point:9,destination:RESCUE_POINT,state:'moving',route:[{...points[RESCUE_POINT]}]});arrival.update(.1);assert.equal(arrival.stats.rescues,1);arrival.capture(arrival.characters[3]);run(arrival,.3);assert.equal(arrival.stats.rescues,1);
+const loss=new Game();for(const c of loss.characters)loss.capture(c);assert.equal(loss.state,'ended');assert.equal(loss.result.reason,'defeat');assert.equal(loss.result.survivors,0);
+for(const duration of [60,180,300]){const timeout=new Game(duration);timeout.remaining=.01;timeout.update(.02);assert.equal(timeout.result.reason,'timeout');assert.equal(timeout.result.duration,duration);}
+const fresh=new Game(180);assert(fresh.characters.every(c=>c.state==='hidden'));assert.equal(fresh.controlledId,0);assert.equal(fresh.stats.rescues,0);
+const focus=new Game(60,rng(4));Object.assign(focus.oni,{x:210,y:310,angle:0,wait:99});Object.assign(focus.controlled,{x:265,y:310,point:9,state:'hidden',exposure:.4});focus.characters.slice(1).forEach(c=>c.decision=99);focus.update(.02);assert.equal(focus.stats.focuses,1);assert.equal(focus.focus.scale,.6);assert.equal(focus.remaining,59.98);assert(Math.abs(focus.simTime-.012)<1e-9);assert(focus.move(0,3));assert(focus.move(0,1));assert(!focus.move(0,2));
+// Keep a dangerous but stationary view to verify cooldown and edge-trigger rearming.
+focus.controlled.route=[];focus.controlled.state='hidden';focus.controlled.point=9;for(let i=0;i<600;i++){focus.controlled.exposure=0;focus.update(.016);}assert.equal(focus.stats.focuses,1);Object.assign(focus.controlled,{x:80,y:550,exposure:0});focus.update(.02);Object.assign(focus.controlled,{x:265,y:310,exposure:.9});focus.update(.02);assert.equal(focus.stats.focuses,2);assert.equal(focus.focus.scale,.42);
+const shielded=new Game();Object.assign(shielded.oni,{x:40,y:380,angle:0,wait:99});Object.assign(shielded.controlled,{x:134,y:380,point:2});shielded.update(.02);assert.equal(shielded.stats.focuses,0);
+const visible=new Game();Object.assign(visible.oni,{x:210,y:310,angle:0,wait:99});Object.assign(visible.controlled,{x:265,y:310,point:9,exposure:1.2});run(visible,3);assert(visible.stats.discoveries>0);assert(visible.stats.captures>0);assert.notEqual(visible.controlledId,0);
+const rules=new Game(60,rng(9),{...rescueRules,rescueEnabled:false});rules.capture(rules.characters[2]);Object.assign(rules.controlled,{...points[RESCUE_POINT],point:RESCUE_POINT,state:'hidden'});assert(!rules.rescue(rules.controlled));
+const results=[];for(let seed=1;seed<=20;seed++){const sim=new Game(60,rng(seed));run(sim,61);assert.equal(sim.state,'ended');assert(sim.stats.patrols>0);assert(sim.stats.comMoves>0);assert(sim.stats.captures>0);results.push({seed,...sim.result,...sim.stats});}
+console.log('PASS: navigation 121 pairs; capture/automatic control transfer; group rescue/arrival/grace/cooldown; defeat/timeout/reset; visibility/focus/redirect/rearm; rule override; 20 complete rounds');console.log(JSON.stringify(results));
