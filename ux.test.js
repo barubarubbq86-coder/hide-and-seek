@@ -1,0 +1,18 @@
+import assert from 'node:assert/strict';
+import {Game,points} from '../engine.js';
+import {mini,placeMini} from '../camera.js';
+import {Sound} from '../sound.js';
+const freeze=g=>{g.characters.forEach(c=>{c.decision=999;c.grace=999;});g.onis.forEach(o=>Object.assign(o,{wait:999,route:[],inspect:null}));};
+const g=new Game();freeze(g);Object.assign(g.controlled,{x:53,y:294,point:9,origin:9});Object.assign(g.characters[1],{...points[3],point:3});assert(g.move(0,3));g.update(.01);assert.equal(g.stats.occupied,1);assert(g.controlled.noticeUntil>g.elapsed);const pos={x:g.controlled.x,y:g.controlled.y},elapsed=g.elapsed;
+for(let i=0;i<30;i++){g.update(1/60);assert.deepEqual({x:g.controlled.x,y:g.controlled.y},pos);}assert(g.elapsed>=elapsed+.49);assert.equal(g.stats.occupied,1);assert(!g.move(0,1));for(let i=0;i<15;i++)g.update(1/60);assert(Math.hypot(g.controlled.x-pos.x,g.controlled.y-pos.y)>0);assert(g.controlled.noticeUntil<=g.elapsed);assert(g.controlled.deniedUntil>g.elapsed);assert.equal(g.stats.occupied,1);
+const free=new Game();freeze(free);assert(free.move(0,3));for(let i=0;i<1700;i++)free.update(1/60);assert.equal(free.stats.occupied,0);assert.equal(free.controlled.noticeUntil,0);assert(!free.move(0,99));assert.equal(free.controlled.noticeUntil,0);free.capture(free.controlled);assert.equal(free.characters[0].noticeUntil,0);
+const com=new Game();freeze(com);Object.assign(com.characters[1],{x:53,y:294,point:9,origin:9});Object.assign(com.characters[2],{...points[3],point:3});assert(com.move(1,3));com.update(.01);assert(com.characters[1].noticeUntil>com.elapsed);const p={x:com.characters[1].x,y:com.characters[1].y};for(let i=0;i<20;i++)com.update(1/60);assert.deepEqual({x:com.characters[1].x,y:com.characters[1].y},p);
+mini.x=324;mini.holdUntil=0;placeMini({x:370,y:95},0);assert.equal(mini.x,12);placeMini({x:40,y:95},1);assert.equal(mini.x,12);placeMini({x:40,y:95},2.1);assert.equal(mini.x,324);placeMini({x:375,y:340},5);assert.equal(mini.x,324);
+// A failed effect must not disable normal BGM; retry creates only failed players.
+class AudioAdapter{constructor(){this.listeners={};this.paused=true;this.volume=0;}addEventListener(k,fn){this.listeners[k]=fn;}setAttribute(){}removeAttribute(){}load(){}play(){this.paused=false;return Promise.resolve();}pause(){this.paused=true;}cloneNode(){return new AudioAdapter();}}
+const sound=new Sound({createAudio:()=>new AudioAdapter()});sound.unlock=()=>{};sound.start();await Promise.resolve();sound.players.spotted.error={code:4,message:'bad MIME'};sound.players.spotted.listeners.error();assert(sound.failed);assert(!sound.players.park.paused);const normal=sound.players.park,broken=sound.players.spotted;sound.retry();await Promise.resolve();assert.equal(sound.players.park,normal);assert.notEqual(sound.players.spotted,broken);assert(!sound.failed);sound.stop();
+// A rejected play() from a discarded player must not poison a successful retry.
+let lateReject,attempt=0;
+class DelayedAudio extends AudioAdapter{play(){this.paused=false;if(this.src.endsWith('/danger.mp3')&&attempt++===0)return new Promise((_resolve,reject)=>lateReject=reject);return Promise.resolve();}}
+const race=new Sound({createAudio:()=>new DelayedAudio()});race.unlock=()=>{};race.start();race.recordError('danger',Error('transient'),'load');race.retry();await Promise.resolve();lateReject(Error('old request failure'));await Promise.resolve();assert(!race.failed);assert.equal(race.status.danger.play,'playing');race.stop();
+console.log('PASS: occupied-only 0.6s notice/actor pause/COM/resume; no false notice on invalid move/capture; minimap retreat +2s hold; independent audio failure +real retry');

@@ -1,0 +1,94 @@
+{
+  "oldFailure": {
+    "failed": true,
+    "parkDecoded": true,
+    "loops": 0
+  },
+  "park": {
+    "peak": 0.007631141692399979,
+    "rms": 0.0020091414436264306,
+    "nodes": 1,
+    "playing": 1
+  },
+  "start": {
+    "ctx": "running",
+    "status": {
+      "park": {
+        "load": "ready",
+        "play": "playing"
+      },
+      "danger": {
+        "load": "ready",
+        "play": "playing"
+      },
+      "spotted": {
+        "load": "ready",
+        "play": "idle"
+      },
+      "captured": {
+        "load": "ready",
+        "play": "idle"
+      }
+    },
+    "mode": "park",
+    "currentTime": 0.650159
+  },
+  "danger": {
+    "peak": 0.01073699165135622,
+    "rms": 0.002633870839168581,
+    "nodes": 1,
+    "playing": 1
+  },
+  "spotted": {
+    "peak": 0.2061767280101776,
+    "rms": 0.04578351250765528,
+    "nodes": 1,
+    "playing": 1
+  },
+  "captured": {
+    "peak": 0.2585911154747009,
+    "rms": 0.07324608255148522,
+    "nodes": 1,
+    "playing": 1
+  },
+  "return": {
+    "peak": 0.045172516256570816,
+    "rms": 0.02905741732183569,
+    "nodes": 1,
+    "playing": 1
+  },
+  "onAgain": {
+    "peak": 0.028352608904242516,
+    "rms": 0.006672490399617185,
+    "nodes": 1,
+    "playing": 1
+  },
+  "offline": {
+    "peak": 0.007136623375117779,
+    "rms": 0.0019381051653315805,
+    "nodes": 1,
+    "playing": 1
+  },
+  "offlineDanger": {
+    "peak": 0.0019398370059207082,
+    "rms": 0.0005340233789112374,
+    "nodes": 1,
+    "playing": 1
+  },
+  "retry-park": {
+    "freshRequest": true,
+    "restoredOutput": true
+  },
+  "retry-danger": {
+    "freshRequest": true,
+    "restoredOutput": true
+  },
+  "retry-spotted": {
+    "freshRequest": true,
+    "restoredOutput": true
+  },
+  "retry-captured": {
+    "freshRequest": true,
+    "restoredOutput": true
+  }
+}

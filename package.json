@@ -1,1 +1,1 @@
-{"name":"hide-and-seek-phase3-5","private":true,"type":"module","scripts":{"test":"node tests/engine.test.js && node tests/field.test.js && node tests/phase35.test.js"}}
+{"name":"hide-and-seek-phase3-6","private":true,"type":"module","scripts":{"test":"node tests/engine.test.js && node tests/field.test.js && node tests/phase35.test.js && node tests/ux.test.js"}}

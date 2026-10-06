@@ -65,7 +65,7 @@ export class Game{
   this.random=random;this.rules=rules;this.duration=seconds;this.remaining=seconds;this.elapsed=0;this.simTime=0;this.state='playing';
   this.events=[];this.nextEvent=1;this.controlledId=0;this.rescueReadyAt=0;this.rescueFlashUntil=0;
   this.focus={remaining:0,cooldown:0,scale:1,redirect:false,armed:true};
-  this.characters=[7,0,2,6,8].map((p,i)=>({id:i,x:points[p].x,y:points[p].y,point:p,origin:p,destination:p,route:[],angle:0,state:'hidden',exposure:0,exposures:[],decision:2+i*1.4,grace:0,deniedUntil:0}));
+  this.characters=[7,0,2,6,8].map((p,i)=>({id:i,x:points[p].x,y:points[p].y,point:p,origin:p,destination:p,route:[],angle:0,state:'hidden',exposure:0,exposures:[],decision:2+i*1.4,grace:0,deniedUntil:0,noticeUntil:0}));
   this.onis=Array.from({length:rules.oniCount??2},(_,id)=>this.makeOni(id));
   this.danger=0;this.result=null;this.stats={moves:0,comMoves:0,discoveries:0,captures:0,patrols:0,rescues:0,released:0,switches:0,focuses:0,occupied:0};
  }
@@ -77,14 +77,14 @@ export class Game{
  available(p,id){return points[p].capacity!==1||!this.occupant(p,id);}
  move(id,p){
   const c=this.characters[id],redirect=id===this.controlledId&&this.focus.remaining>0&&this.focus.redirect;
-  if(this.state!=='playing'||!c||!points[p]||['captured','spotted'].includes(c.state)||c.route.length&&!redirect||p===c.point)return false;
+  if(this.state!=='playing'||!c||!points[p]||['captured','spotted'].includes(c.state)||c.route.length&&!redirect||c.noticeUntil>this.elapsed||p===c.point)return false;
   const route=pathfind(c,points[p]);if(!route.length)return false;
   if(c.route.length&&redirect)this.focus.redirect=false;
   if(c.point!==null)c.origin=c.point;
   c.route=route;c.destination=p;c.state='moving';c.point=null;this.stats[id===this.controlledId?'moves':'comMoves']++;return true;
  }
  rerouteOccupied(c){
-  const rejected=c.destination;c.deniedUntil=this.elapsed+2;this.stats.occupied++;this.emit('occupied',c.id,{point:rejected});
+  const rejected=c.destination;c.deniedUntil=this.elapsed+1.4;c.noticeUntil=this.elapsed+.6;this.stats.occupied++;this.emit('occupied',c.id,{point:rejected});
   const alternatives=points.map((p,i)=>({i,d:dist(c,p)})).filter(p=>p.i!==rejected&&points[p.i].capacity===1&&this.available(p.i,c.id)&&p.d<150).sort((a,b)=>a.d-b.d);
   if(c.origin!==null&&c.origin!==rejected&&this.available(c.origin,c.id))alternatives.push({i:c.origin});
   // If every shelter is taken, an open square is always reachable. Never teleport or overlap.
@@ -98,7 +98,7 @@ export class Game{
  switchControl(){if(this.controlled.state!=='captured')return;const next=this.characters.filter(c=>c.state!=='captured').sort((a,b)=>(a.state==='spotted')-(b.state==='spotted')||(a.state==='moving')-(b.state==='moving')||a.id-b.id)[0];if(next){this.controlledId=next.id;this.stats.switches++;this.focus.remaining=0;this.focus.redirect=false;this.focus.armed=true;this.emit('control',next.id);}}
  clearTarget(o){o.target=null;o.route=[];o.wait=.7;o.mode='patrol';o.inspect=null;}
  capture(c){if(!c||c.state==='captured'||this.state!=='playing')return;
-  c.state='captured';c.route=[];c.point=null;c.exposure=0;c.exposures=[];c.grace=0;Object.assign(c,this.rules.capturedPosition(c));
+  c.state='captured';c.route=[];c.point=null;c.exposure=0;c.exposures=[];c.grace=0;c.noticeUntil=0;c.deniedUntil=0;Object.assign(c,this.rules.capturedPosition(c));
   this.stats.captures++;this.emit('capture',c.id);for(const o of this.onis)if(o.target===c.id)this.clearTarget(o);
   this.switchControl();if(this.rules.outcome(this)==='defeat')this.finish('defeat');
  }
@@ -107,7 +107,7 @@ export class Game{
   const targets=this.rules.rescueTargets(this);if(!targets.length)return false;
   this.rescueReadyAt=this.elapsed+this.rules.rescueCooldown;this.rescueFlashUntil=this.elapsed+2;
   const exits=[5,1,9,4,8];
-  for(const c of targets){c.state='moving';c.point=null;c.origin=RESCUE_POINT;c.destination=exits[c.id];c.exposure=0;c.exposures=[];c.grace=this.rules.releaseGrace;c.decision=2+this.random()*3;c.route=pathfind(c,points[c.destination]);}
+  for(const c of targets){c.state='moving';c.point=null;c.origin=RESCUE_POINT;c.destination=exits[c.id];c.exposure=0;c.exposures=[];c.noticeUntil=0;c.deniedUntil=0;c.grace=this.rules.releaseGrace;c.decision=2+this.random()*3;c.route=pathfind(c,points[c.destination]);}
   this.stats.rescues++;this.stats.released+=targets.length;this.emit('rescue',rescuer.id,{count:targets.length});return true;
  }
  updateFocus(dt){const f=this.focus;f.remaining=Math.max(0,f.remaining-dt);f.cooldown=Math.max(0,f.cooldown-dt);this.danger=this.risk(this.controlled);
@@ -124,8 +124,8 @@ export class Game{
   if(this.rules.lateOniAt&&this.remaining/this.duration<=this.rules.lateOniAt&&this.onis.length===2){this.onis.push(this.makeOni(2));this.emit('oni-added',2);}
   this.updateFocus(realDt);const dt=realDt*this.focus.scale;this.simTime+=dt;
   for(const c of this.characters){if(c.state==='captured')continue;c.grace=Math.max(0,c.grace-dt);
-   if(c.state==='moving'&&dist(c,points[c.destination])<23&&!this.available(c.destination,c.id))this.rerouteOccupied(c);
-   walk(c,c.state==='spotted'?0:WALK_SPEED,dt);
+   if(c.state==='moving'&&c.noticeUntil<=this.elapsed&&dist(c,points[c.destination])<23&&!this.available(c.destination,c.id))this.rerouteOccupied(c);
+   walk(c,c.state==='spotted'||c.noticeUntil>this.elapsed?0:WALK_SPEED,dt);
    if(c.state==='moving'&&!c.route.length){if(!this.available(c.destination,c.id))this.rerouteOccupied(c);else{c.point=c.destination;c.state='hidden';if(c.point===RESCUE_POINT)this.rescue(c);}}
    if(c.id!==this.controlledId&&c.state!=='spotted'){c.decision-=dt;if(c.decision<=0&&!c.route.length){c.decision=4+this.random()*8;
     const prisoners=this.rules.rescueTargets(this).length,help=prisoners>0&&this.elapsed>=this.rescueReadyAt&&this.onis.every(o=>dist(o,points[RESCUE_POINT])>90);
@@ -155,5 +155,5 @@ export class Game{
   }
   this.danger=this.risk(this.controlled);const outcome=this.rules.outcome(this);if(outcome&&this.state==='playing')this.finish(outcome);
  }
- spot(c,o=this.oni){if(c.grace>0||['captured','spotted'].includes(c.state)||o.target!==null)return false;c.state='spotted';c.route=[];o.target=c.id;o.route=pathfind(o,c);o.mode='chase';this.stats.discoveries++;this.emit('spotted',c.id,{oni:o.id});return true;}
+ spot(c,o=this.oni){if(c.grace>0||['captured','spotted'].includes(c.state)||o.target!==null)return false;c.state='spotted';c.noticeUntil=0;c.deniedUntil=0;c.route=[];o.target=c.id;o.route=pathfind(o,c);o.mode='chase';this.stats.discoveries++;this.emit('spotted',c.id,{oni:o.id});return true;}
 }

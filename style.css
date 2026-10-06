@@ -6,3 +6,5 @@
 .focus-label{position:absolute;bottom:20px;left:50%;transform:translateX(-50%);width:max-content;max-width:95%;font-size:11px;color:#ffe3a3;border:1px solid #baa47c;background:#302232e8;padding:10px 12px;border-radius:18px;pointer-events:none}.focus-label[hidden]{display:none}
 
 canvas{touch-action:none}.follow-button{position:absolute;right:9px;bottom:9px;min-height:44px;padding:8px 12px;border-radius:13px;border:1px solid #9b8070;background:#30283ae8;color:#ffe0b3;font-size:11px}.follow-button[hidden]{display:none}
+
+.audio-retry{width:100%;min-height:44px;margin:0 0 10px;border:1px solid #9b8070;border-radius:12px;background:#30283a;color:#ffe0b3;font-size:12px}.audio-retry[hidden]{display:none}

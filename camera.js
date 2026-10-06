@@ -13,3 +13,11 @@ export class Camera{
  screen(x,y){return {x:x-this.x,y:y-this.y};}
 }
 export const mini={x:W-96,y:45,w:84,h:120};
+
+// The viewport camera stays unchanged. Only the HUD changes sides, with a hold time.
+export function placeMini(screen,time){
+ const near=screen.y<mini.y+mini.h+38&&screen.y>mini.y-45;
+ const under=screen.x>mini.x-35&&screen.x<mini.x+mini.w+35;
+ if(near&&under&&time>=(mini.holdUntil||0)){mini.x=mini.x>W/2?12:W-96;mini.holdUntil=time+2;}
+ return mini;
+}
